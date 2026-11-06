@@ -1,2 +1,0 @@
-# error: keycloak: db: no database-server connection given
-realm: {name: master}
