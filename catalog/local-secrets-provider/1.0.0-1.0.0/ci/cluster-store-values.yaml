@@ -1,0 +1,12 @@
+# Keys read from the platform's ClusterSecretStore (cluster-store-platform.yaml),
+# keys of the instance's namespace (demo): two properties of one, and one with
+# a label and no static data.
+secrets:
+  - name: creds-demo-api
+    remoteKey: demo/api
+    properties: [username, password]
+  - name: creds-demo-own
+    remoteKey: demo/own/token
+    properties: [token]
+    labels:
+      team: data

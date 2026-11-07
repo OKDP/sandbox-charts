@@ -1,0 +1,7 @@
+# error: local-secrets-provider: secrets[creds-a].labels: okdp.io/protected is reserved: no label under okdp.io/ (OKDP's) or replicator.v1.mittwald.de/ (a replicator's)
+# A label of OKDP's (okdp.io/protected: the deletion protection): refused.
+secrets:
+  - name: creds-a
+    generate: [{key: password}]
+    labels:
+      okdp.io/protected: "true"

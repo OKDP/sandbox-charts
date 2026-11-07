@@ -1,0 +1,8 @@
+# The platform's secret store every case reads its remoteKey entries from,
+# a ClusterSecretStore (no provider); a case's own platform values change
+# it (sandbox: the SecretStore of each namespace, as the sandbox's;
+# no-store: none).
+global:
+  okdp:
+    secrets:
+      store: okdp-secrets

@@ -1,0 +1,4 @@
+# error: - at '/secrets/0': properties 'properties' required, if 'remoteKey' exists
+# A key read without the properties to read of it.
+secrets:
+  - {name: creds-a, remoteKey: demo/a, data: {client_id: a}}

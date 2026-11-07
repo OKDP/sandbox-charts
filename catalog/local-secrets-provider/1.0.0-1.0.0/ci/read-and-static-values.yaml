@@ -1,0 +1,3 @@
+# error: local-secrets-provider: secrets[creds-a]: client_secret is both read (properties) and static (data)
+secrets:
+  - {name: creds-a, remoteKey: demo/a, properties: [client_secret], data: {client_secret: literal}}

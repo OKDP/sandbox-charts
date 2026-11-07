@@ -1,0 +1,9 @@
+# error: local-secrets-provider: secrets[creds-a].labels: replicator.v1.mittwald.de/replicate-to is reserved
+# A replicator's key among the labels, the Secret copied to other namespaces:
+# refused.
+secrets:
+  - name: creds-a
+    remoteKey: demo/a
+    properties: [client_secret]
+    labels:
+      replicator.v1.mittwald.de/replicate-to: ".*"

@@ -1,0 +1,5 @@
+# No secret store.
+global:
+  okdp:
+    secrets:
+      store: ""

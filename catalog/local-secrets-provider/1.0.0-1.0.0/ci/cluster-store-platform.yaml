@@ -1,0 +1,6 @@
+# A store without provider (a ClusterSecretStore), read every 15 minutes.
+global:
+  okdp:
+    secrets:
+      store: okdp-secrets
+      refreshInterval: 15m

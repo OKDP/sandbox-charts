@@ -1,0 +1,23 @@
+# The sandbox's secret store (okdp-sandbox gitops/platform.yaml): OpenBao, a
+# SecretStore okdp-secrets of each namespace, its provider given.
+global:
+  okdp:
+    secrets:
+      store: okdp-secrets
+      serviceAccount: okdp-secrets
+      provider:
+        vault:
+          server: https://openbao.openbao.svc.cluster.local:8200
+          path: okdp
+          version: v2
+          caProvider:
+            type: Secret
+            name: certs-bundle
+            key: ca.crt
+          auth:
+            kubernetes:
+              mountPath: kubernetes
+              role: okdp
+              serviceAccountRef:
+                name: okdp-secrets
+                audiences: [openbao]

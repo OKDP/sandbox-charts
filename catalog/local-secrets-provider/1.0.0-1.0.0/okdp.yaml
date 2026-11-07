@@ -1,52 +1,175 @@
 # OKDP's part of local-secrets-provider (okdp-compiler): no upstream chart,
-# no dependency in Chart.yaml, no platform value read; the mapping: one
-# Secret per entry of `secrets`, OKDP's own objects (the former KuboCD
-# module "main", the chart oci://quay.io/okdp/charts/local-secrets-provider,
-# taken in here). ${{ ... }} is a CEL expression.
+# no dependency in Chart.yaml; the mapping: one Secret per entry of
+# `secrets`, OKDP's own objects. Its
+# credentials are never written in the values (no credential in Git):
+# External Secrets Operator generates them in the cluster (generate), or
+# reads them from the platform's secret store (remoteKey, a key of the
+# instance's namespace, under the platform's settings global.okdp.secrets,
+# the only platform values read). Each Secret stays in the instance's
+# namespace: no key of another namespace or of the platform, no replication,
+# no label of OKDP's or of a replicator.
+# ${{ ... }} is a CEL expression.
 
 roles: [external-secrets]
-dependsOn: [tools]
+dependsOn: [external-secrets]
 
 vars:
   names: ${{ values.secrets.map(s, s.name) }}
+  # The label keys no entry may set: OKDP's (okdp.io/, a subdomain of
+  # okdp.io: okdp.io/protected, okdp.io/instance...) and kubernetes-replicator's
+  # (replicator.v1.mittwald.de/), whose objects would cross namespaces.
+  reserved: >-
+    ${{ values.secrets.map(s, s.?labels.orValue({}).map(k, k).sort()
+          .filter(k, cel.bind(d, k.contains('/') ? k.split('/')[0] : '',
+            d == 'okdp.io' || d.endsWith('.okdp.io') || d == 'replicator.v1.mittwald.de'))
+          .map(k, {'secret': s.name, 'key': k})).flatten() }}
+  # The entries read from the platform's secret store.
+  remote: ${{ values.secrets.filter(s, has(s.remoteKey)) }}
+  # The platform's secret store, as the compiler's own ExternalSecrets
+  # reference it (a connection's secretRef.remoteKey): the SecretStore of
+  # that name of the namespace when the platform gives its provider
+  # (global.okdp.secrets.provider, the SecretStore the compiler writes in
+  # each project's namespace), else the ClusterSecretStore of that name;
+  # read every global.okdp.secrets.refreshInterval (1h).
+  store: ${{ first([global.?okdp.?secrets.?store.orValue('')]) }}
+  storeRef:
+    name: ${{ store }}
+    kind: >-
+      ${{ cel.bind(p, global.?okdp.?secrets.?provider.orValue({}), type(p) == map && p.size() > 0)
+          ? 'SecretStore' : 'ClusterSecretStore' }}
+  refreshInterval: ${{ first([global.?okdp.?secrets.?refreshInterval.orValue(''), '1h']) }}
 
 errors:
+  # Each Secret's credentials are generated in the cluster (generate) or
+  # read from the platform's secret store (remoteKey): one of them, never a
+  # value of the instance.
+  - $for: s in values.secrets.filter(s, !has(s.generate) && !has(s.remoteKey))
+    $each: >-
+      local-secrets-provider: secrets[${{ s.name }}]: neither generate nor remoteKey: its credentials
+      are generated in the cluster (generate) or read from the platform's secret store (remoteKey),
+      never given in the values
+  - $for: s in values.secrets.filter(s, has(s.generate) && has(s.remoteKey))
+    $each: >-
+      local-secrets-provider: secrets[${{ s.name }}]: both generate and remoteKey: its credentials
+      are generated in the cluster (generate) or read from the platform's secret store (remoteKey),
+      not both
   # An empty value is refused (the schema refuses an empty string): the
   # former chart marked it for kubernetes-secret-generator, which OKDP no
-  # longer ships.
+  # longer ships. A random value is a key of generate.
   - $for: >-
       e in values.secrets.map(s, s.?data.orValue({}).map(k, k).sort()
         .filter(k, str(s.data[k]) == '').map(k, {'secret': s.name, 'key': k})).flatten()
-    $each: "local-secrets-provider: secrets[${{ e.secret }}].data.${{ e.key }} is empty: give a value (nothing generates it)"
+    $each: "local-secrets-provider: secrets[${{ e.secret }}].data.${{ e.key }} is empty: give a value, or generate the key (generate)"
+  # A key is generated, or read, or static: the generated or read value
+  # would replace the static one.
+  - $for: >-
+      e in values.secrets.map(s, s.?generate.orValue([]).map(g, g.key)
+        .filter(k, k in s.?data.orValue({})).map(k, {'secret': s.name, 'key': k})).flatten()
+    $each: "local-secrets-provider: secrets[${{ e.secret }}]: ${{ e.key }} is both generated (generate) and static (data)"
+  - $for: >-
+      e in remote.map(s, s.properties
+        .filter(k, k in s.?data.orValue({})).map(k, {'secret': s.name, 'key': k})).flatten()
+    $each: "local-secrets-provider: secrets[${{ e.secret }}]: ${{ e.key }} is both read (properties) and static (data)"
+  # The platform's secret store, its keys: a path, under the instance's
+  # namespace's own keys only. The platform's keys (platform/, which every
+  # namespace reads) are not this package's: a platform connection reads
+  # them, its secretRef.remoteKey (the compiler's). Another namespace's keys
+  # are its own, whatever the store's policy allows.
+  - $for: "s in store == '' ? remote : []"
+    $each: >-
+      local-secrets-provider: secrets[${{ s.name }}].remoteKey: it is read from the platform's
+      secret store, global.okdp.secrets.store, which is not set
+  - $for: >-
+      s in remote.filter(s, s.remoteKey.split('/').exists(x, x == '' || x == '.' || x == '..'))
+    $each: >-
+      local-secrets-provider: secrets[${{ s.name }}].remoteKey ${{ quote(s.remoteKey) }}: a path of
+      the platform's secret store, segments separated by "/", none empty, "." or ".."
+  - $for: s in remote.filter(s, s.remoteKey.startsWith('platform/'))
+    $each: >-
+      local-secrets-provider: secrets[${{ s.name }}].remoteKey ${{ quote(s.remoteKey) }}: a key
+      of the platform's, which this package does not read: an instance reads its namespace's
+      keys only, under "${{ release.namespace }}/" (a platform key is a platform connection's
+      secretRef.remoteKey)
+  - $for: >-
+      s in remote.filter(s, !s.remoteKey.startsWith('platform/')
+        && !s.remoteKey.startsWith(release.namespace + '/'))
+    $each: >-
+      local-secrets-provider: secrets[${{ s.name }}].remoteKey ${{ quote(s.remoteKey) }}: a key
+      this instance may not read: its namespace's keys only, under "${{ release.namespace }}/"
+  # A Secret stays in its namespace and is no OKDP object: no label of
+  # OKDP's (okdp.io/protected would keep it from deletion, okdp.io/instance
+  # claim it for another instance) or of a replicator (another namespace).
+  - $for: e in reserved
+    $each: >-
+      local-secrets-provider: secrets[${{ e.secret }}].labels: ${{ e.key }} is reserved: no
+      label under okdp.io/ (OKDP's) or replicator.v1.mittwald.de/ (a replicator's)
   # One Secret per name: two entries of one name would be one object twice.
   - $for: n in names.distinct()
     $each:
       $if: ${{ names.filter(x, x == n).size() > 1 }}
       $value: "local-secrets-provider: secrets: ${{ n }} is listed twice"
 
-# OKDP's own objects, rendered by the umbrella (okdp.objects.yaml): one
-# Secret per entry, its data as strings (Secret data is text), labelled with
-# OKDP's labels and the entry's `labels` (OKDP's win), and replicated to
-# every namespace by kubernetes-replicator (tools), labels included.
+# OKDP's own objects, rendered by the umbrella (okdp.objects.yaml). Per
+# entry, the ExternalSecret writing the Secret: its credentials, generated
+# or read, and its static data (as text). The Secret carries OKDP's labels
+# and the entry's `labels` (OKDP's win), no annotation: it stays in the
+# instance's namespace.
+#   generate   an ESO Password generator per generated key, and the
+#              ExternalSecret (okdpGeneratedSecret), generated once
+#              (refreshInterval 0)
+#   remoteKey  the ExternalSecret reading each of its properties, a key of
+#              the Secret, from the platform's secret store, as the
+#              compiler's own do (a connection's secretRef.remoteKey), every
+#              refreshInterval
 objects:
   - $for: s in values.secrets
     $vars:
-      extra: ${{ s.?labels.orValue({}) }}
+      extra: ${{ s.?labels.orValue({}).transformMap(k, v, !(k in labels), str(v)) }}
     $each:
-      apiVersion: v1
-      kind: Secret
-      metadata:
-        name: ${{ s.name }}
-        labels:
-          $for: k in (labels.map(k, k) + extra.map(k, k)).distinct().sort()
-          $key: ${{ k }}
-          $value: "${{ k in labels ? labels[k] : str(extra[k]) }}"
-        annotations:
-          replicator.v1.mittwald.de/replicate-to: "*"
-      type: Opaque
-      stringData: ${{ s.?data.orValue({}).transformMap(k, v, str(v)) }}
+      - $spread: >-
+          ${{ has(s.generate) ? okdpGeneratedSecret({'name': s.name, 'keys': s.generate,
+            'stringData': s.?data.orValue({}), 'labels': extra}) : [] }}
+      - $for: r in [s].filter(r, has(r.remoteKey))
+        $vars:
+          esLabels:
+            $for: l in labels.transformList(k, v, [k, v]) + extra.transformList(k, v, [k, v])
+            $key: ${{ l[0] }}
+            $value: ${{ l[1] }}
+          # The Secret's data: the static keys, as text (a value with "{{"
+          # as a template string literal), then the properties read.
+          data: >-
+            ${{ r.?data.orValue({}).transformList(k, v, cel.bind(t, str(v), {'k': k, 'v': t.contains('{{') ? '{{ ' + quote(t) + ' }}' : t}))
+                + r.properties.map(p, {'k': p, 'v': '{{ index . ' + quote(p) + ' }}'}) }}
+        $each:
+          apiVersion: external-secrets.io/v1
+          kind: ExternalSecret
+          metadata:
+            name: ${{ r.name }}
+            namespace: ${{ release.namespace }}
+            labels: ${{ esLabels }}
+          spec:
+            refreshInterval: ${{ refreshInterval }}
+            secretStoreRef: ${{ storeRef }}
+            target:
+              name: ${{ r.name }}
+              creationPolicy: Owner
+              template:
+                engineVersion: v2
+                metadata:
+                  labels: ${{ esLabels }}
+                data:
+                  $for: d in data
+                  $key: ${{ d.k }}
+                  $value: ${{ d.v }}
+            data:
+              - $for: p in r.properties
+                $each:
+                  secretKey: ${{ p }}
+                  remoteRef: {key: "${{ r.remoteKey }}", property: "${{ p }}"}
 
-# okdp.info.yaml: no UI, no provided connection.
+# okdp.info.yaml: no UI, no provided connection; the Secrets it writes,
+# their generated or read keys and their static keys.
 instance:
   usage: |-
-    Local stand-in for a secret manager. Secrets provisioned and replicated to every namespace:${{ values.secrets.map(s, '\n- `' + s.name + '`').join('') }}
+    Local stand-in for a secret manager. Secrets generated in the cluster or read from the platform's secret store (External Secrets Operator):${{ values.secrets.map(s, '\n- `' + s.name + '`: ' + (has(s.remoteKey) ? 'read ' + s.properties.map(p, '`' + p + '`').join(', ') + ' from `' + s.remoteKey + '` (the platform\'s secret store)' : 'generated ' + s.generate.map(g, '`' + g.key + '`').join(', ')) + (s.?data.orValue({}).size() > 0 ? '; static ' + s.data.map(k, k).sort().map(k, '`' + k + '`').join(', ') : '')).join('') }}
+    Read a value with kubectl get secret <name> -o jsonpath='{.data.<key>}' | base64 -d.

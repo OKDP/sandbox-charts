@@ -1,0 +1,4 @@
+# error: local-secrets-provider: secrets[creds-a]: neither generate nor remoteKey
+# A Secret of static values only, a credential in Git: refused.
+secrets:
+  - {name: creds-a, data: {client_id: app, client_secret: literal}}

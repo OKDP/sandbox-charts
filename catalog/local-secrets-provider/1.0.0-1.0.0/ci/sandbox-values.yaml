@@ -1,11 +1,27 @@
+# An OAuth client's credentials (its client_id static, its secret generated),
+# a JupyterHub crypt key (64 hex characters: the SHA-256 of a generated value)
+# and an S3 identity, beside static keys and the label of a database owner
+# Secret; and a client secret read from the platform's secret store, the
+# SecretStore of the namespace (sandbox-platform.yaml), under the namespace's
+# keys (demo/keycloak/<client>, where the sandbox's OpenBao init writes the
+# secret of a Keycloak client the namespace reads), its client_id static.
 secrets:
-  - name: creds-keycloak-db
+  - name: creds-demo-app-oauth2
+    generate: [{key: client_secret}]
+    data: {client_id: app}
+  - name: creds-demo-jupyterhub-oauth2
+    generate: [{key: client_secret}, {key: JUPYTERHUB_CRYPT_KEY, transform: sha256}]
+    data: {client_id: jupyterhub}
+  - name: creds-seaweedfs-s3
+    generate: [{key: accessKey, length: 20, symbols: 0}, {key: secretKey, length: 40, symbols: 0}]
+  - name: generated
     labels:
       cnpg.io/reload: "true"
+    generate: [{key: password, length: 24}]
     data:
-      username: keycloak
-      password: keycloak123
-  - name: generated
-    data:
-      token: ci-token
+      username: app
       port: 5432
+  - name: creds-demo-trino-oauth2
+    remoteKey: demo/keycloak/trino
+    properties: [client_secret]
+    data: {client_id: trino}

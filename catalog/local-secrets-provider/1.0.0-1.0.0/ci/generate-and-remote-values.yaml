@@ -1,0 +1,3 @@
+# error: local-secrets-provider: secrets[creds-a]: both generate and remoteKey
+secrets:
+  - {name: creds-a, generate: [{key: client_secret}], remoteKey: demo/a, properties: [client_secret]}

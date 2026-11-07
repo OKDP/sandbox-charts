@@ -5,21 +5,28 @@
   "properties": {
     "global": {
       "type": "object",
-      "description": "Platform values (global.okdp): the context's layers (--context), the platform's then the higher levels', never an instance's."
+      "description": "Platform values (global.okdp): the context's layers, the platform's (platform.yaml) then its project's (project.yaml), never an instance's."
     },
     "secrets": {
       "type": "array",
       "default": [],
       "title": "Secrets",
-      "description": "Secrets to provision. Each entry creates one Kubernetes Secret, replicated to every namespace. Names are unique.",
+      "description": "Secrets to write. Each entry is one Kubernetes Secret: its credentials random values External Secrets Operator generates once in the cluster (generate), or keys it reads from the platform's secret store (remoteKey and properties), one or the other; its data keys static values (no credential). Each Secret stays in the instance's namespace. Names are unique.",
       "x-ui-group": "Secrets",
       "x-ui-order": 1,
       "items": {
         "type": "object",
         "required": [
-          "name",
-          "data"
+          "name"
         ],
+        "dependencies": {
+          "remoteKey": [
+            "properties"
+          ],
+          "properties": [
+            "remoteKey"
+          ]
+        },
         "additionalProperties": false,
         "properties": {
           "name": {
@@ -28,10 +35,75 @@
             "description": "Name of the Kubernetes Secret to create.",
             "pattern": "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$"
           },
+          "generate": {
+            "type": "array",
+            "minItems": 1,
+            "title": "Generated keys",
+            "description": "The keys whose values are random, generated once in the cluster by an ESO Password generator each (never in Git, never rotated): key, length (default 32), digits (default 6), symbols (default 0), noUpper (default false), transform (sha256: the key holds the value's SHA-256 in hex, 64 characters; b64enc: its base64). A Secret is frozen once written: to change its keys, give it a new name. Not with remoteKey.",
+            "items": {
+              "type": "object",
+              "required": [
+                "key"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "title": "Key",
+                  "pattern": "^[-._a-zA-Z0-9]+$"
+                },
+                "length": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "title": "Length"
+                },
+                "digits": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "title": "Digits"
+                },
+                "symbols": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "title": "Symbols"
+                },
+                "noUpper": {
+                  "type": "boolean",
+                  "title": "No upper-case letters"
+                },
+                "transform": {
+                  "type": "string",
+                  "enum": [
+                    "",
+                    "sha256",
+                    "b64enc"
+                  ],
+                  "title": "Transform"
+                }
+              }
+            }
+          },
+          "remoteKey": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Key of the secret store",
+            "description": "The key of the platform's secret store (global.okdp.secrets.store) the Secret's credentials are read from, every global.okdp.secrets.refreshInterval (1h), by an ExternalSecret: a path, segments separated by \"/\", under the instance's namespace (<namespace>/...): neither the platform's keys (platform/) nor another namespace's. Not with generate; needs properties."
+          },
+          "properties": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "title": "Properties read",
+            "description": "With remoteKey: the properties of the key read, each a key of the Secret of the same name (client_secret).",
+            "items": {
+              "type": "string",
+              "pattern": "^[-._a-zA-Z0-9]+$"
+            }
+          },
           "data": {
             "type": "object",
-            "title": "Data",
-            "description": "Free-form key/value pairs stored in the Secret. Values cannot be empty: nothing generates them.",
+            "title": "Static data",
+            "description": "Keys of static values, no credential (a client_id, a username, a port), written as text beside the generated or read keys. Values cannot be empty; a key cannot also be generated or read.",
             "additionalProperties": {
               "type": [
                 "string",
@@ -39,12 +111,15 @@
                 "boolean"
               ],
               "minLength": 1
+            },
+            "propertyNames": {
+              "pattern": "^[-._a-zA-Z0-9]+$"
             }
           },
           "labels": {
             "type": "object",
             "title": "Labels",
-            "description": "Extra labels of the Secret, copied to its replicas. Database owner Secrets read by CloudNativePG managed roles need cnpg.io/reload: \"true\" (otherwise a role created before its Secret is replicated keeps no password).",
+            "description": "Extra labels of the Secret, none under okdp.io/ (OKDP's) or replicator.v1.mittwald.de/. Database owner Secrets read by CloudNativePG managed roles need cnpg.io/reload: \"true\" (otherwise a role created before its Secret keeps no password).",
             "additionalProperties": {
               "type": "string"
             }

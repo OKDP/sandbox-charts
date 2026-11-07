@@ -1,0 +1,4 @@
+# error: - at '/secrets/0': additional properties 'replicateTo' not allowed
+# replicateTo is gone (no replicator): an entry that sets it is refused.
+secrets:
+  - {name: creds-a, generate: [{key: password}], replicateTo: "*"}

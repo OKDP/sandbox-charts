@@ -1,0 +1,4 @@
+# error: local-secrets-provider: secrets[creds-a].remoteKey "finance/finance.ledger.database": a key this instance may not read
+# Another namespace's claim: refused, whatever the store's policy allows.
+secrets:
+  - {name: creds-a, remoteKey: finance/finance.ledger.database, properties: [password]}

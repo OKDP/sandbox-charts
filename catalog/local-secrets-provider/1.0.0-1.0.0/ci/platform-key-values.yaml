@@ -1,0 +1,5 @@
+# error: local-secrets-provider: secrets[creds-a].remoteKey "platform/keycloak/okdp-control-plane": a key of the platform's, which this package does not read
+# A platform key, which every namespace may read in the store: refused, an
+# instance reads its namespace's keys only.
+secrets:
+  - {name: creds-a, remoteKey: platform/keycloak/okdp-control-plane, properties: [client_secret]}
