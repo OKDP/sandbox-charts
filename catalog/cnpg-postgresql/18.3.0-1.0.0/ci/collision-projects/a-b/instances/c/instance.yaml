@@ -1,0 +1,7 @@
+# The first of two claimers whose claim IDs collide under a lossy mapping of an
+# ID to a name (the dots and the dashes both "_", say): the instance c of the
+# project a-b claims a-b.c.db and a-b.c.a-db, the instance b-c of the project a
+# a.b-c.db and a.b-c.a-db (ci/collision-projects/a). The provider keeps them
+# two, a database and its role each.
+service: database-claimer
+version: 1.0.0

@@ -1,0 +1,10 @@
+# The instance under test, demo-cnpg-postgresql, the provider of the
+# default class of database-server connections, local, instead of the
+# platform's database server (ci/platform.yaml of the repository).
+global:
+  okdp:
+    provisioning:
+      database-server:
+        default: local
+        classes:
+          local: {provider: demo/cnpg-postgresql}

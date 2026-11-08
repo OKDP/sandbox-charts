@@ -1,0 +1,4 @@
+# A claimer of the case collision (ci/catalog/database-claimer of the
+# repository): its claims demo.x-a.db and demo.x-a.a-db.
+service: database-claimer
+version: 1.0.0

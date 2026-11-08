@@ -1,0 +1,6 @@
+# A claim bound to demo-cnpg-postgresql whose SQL name, its ID's dots as
+# underscores, is a database of its values.
+claims:
+  reports:
+    contract: database-server
+    provider: cnpg-postgresql

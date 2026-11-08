@@ -1,0 +1,11 @@
+# A database server of the project declared with a line break in its host,
+# which no instance references: the compiler checks every connection of a
+# context against its contract.
+connections:
+  external-pg:
+    contract: database-server
+    engine: postgresql
+    host: "pg.example.com\nx.host=attacker"
+    port: 5432
+    dbName: analytics
+    secretRef: {name: external-pg-app}

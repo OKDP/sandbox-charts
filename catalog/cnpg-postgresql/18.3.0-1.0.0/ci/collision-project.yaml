@@ -1,0 +1,7 @@
+# A named claim whose SQL name is longer than 62 characters: hashed. The
+# claims of the instances x and x-a (ci/collision-instances/) are claim
+# templates.
+claims:
+  a-claim-of-a-name-long-enough-for-its-sql-name-to-be-hashed:
+    contract: database-server
+    provider: cnpg-postgresql

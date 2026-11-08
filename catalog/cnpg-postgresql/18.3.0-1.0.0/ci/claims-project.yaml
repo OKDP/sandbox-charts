@@ -1,0 +1,23 @@
+# The project demo. A class of its own, vector, databases with pgvector
+# (request: a key the class fixes, which its claims may not set); and its
+# named claims, each bound to demo-cnpg-postgresql and given to it whether
+# an instance references it or not:
+# - analytics, of the default class (local), with extensions;
+# - embeddings, of the class vector;
+# - reports, of the provider it names, whatever the classes.
+global:
+  okdp:
+    provisioning:
+      database-server:
+        classes:
+          vector: {provider: cnpg-postgresql, request: {extensions: [vector]}}
+claims:
+  analytics:
+    contract: database-server
+    request: {extensions: [pg_trgm, unaccent]}
+  embeddings:
+    contract: database-server
+    class: vector
+  reports:
+    contract: database-server
+    provider: cnpg-postgresql

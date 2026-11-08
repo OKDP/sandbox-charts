@@ -1,4 +1,12 @@
-# The sandbox's storage classes (--context, level 0, after platform.yaml).
+# The sandbox's storage classes, and the instance under test the provider of
+# the default class of database-server connections, as the platform's
+# (level 0, over platform.yaml).
 global:
   okdp:
     storageClass: {data: standard, workspace: standard}
+    tls: {clusterIssuer: default-issuer}
+    provisioning:
+      database-server:
+        default: standard
+        classes:
+          standard: {provider: demo/cnpg-postgresql}

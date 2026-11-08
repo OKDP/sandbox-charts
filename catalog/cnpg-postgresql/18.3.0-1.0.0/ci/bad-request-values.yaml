@@ -1,0 +1,5 @@
+# error: claims.gis: claim (database-server): the request does not meet the contract's claim schema (x-okdp-claim):
+# A named claim requests an extension the contract's claim schema does not
+# allow (ci/bad-request-project.yaml): postgis, which the cluster's image
+# does not ship.
+databases: []

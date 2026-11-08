@@ -1,0 +1,7 @@
+# A database of the values with the SQL name of the claim reports of the
+# project demo (ci/name-clash-project.yaml), its ID demo.reports: the claim's
+# SQL name is hashed (demo_reports_ and 50 hexadecimal digits), the instance
+# compiles, the claim does not fail it.
+databases:
+  - name: demo_reports
+    owner: {username: reports, passwordSecret: creds-reports-db}

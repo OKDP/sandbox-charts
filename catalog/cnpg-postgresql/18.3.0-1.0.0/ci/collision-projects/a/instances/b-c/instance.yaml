@@ -1,0 +1,5 @@
+# The second of two claimers whose claim IDs collide under a lossy mapping
+# (ci/collision-projects/a-b/instances/c): a.b-c.db and a.b-c.a-db, against
+# a-b.c.db and a-b.c.a-db.
+service: database-claimer
+version: 1.0.0

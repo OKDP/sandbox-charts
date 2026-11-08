@@ -1,0 +1,7 @@
+# The provider of the claims of the instances x and x-a of the project demo
+# (ci/collision-instances/): demo.x.a-db and demo.x-a.db, one SQL name,
+# demo_x_a_db, under the former encoding (dots and dashes as underscores),
+# demo_x_a__db and demo_x__a_db now; and of a named claim whose SQL name is
+# too long, hashed (ci/collision-project.yaml). Each its own database and
+# role; none fails the instance.
+databases: []

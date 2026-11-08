@@ -5,13 +5,13 @@
   "properties": {
     "global": {
       "type": "object",
-      "description": "Platform values (global.okdp): the context's layers (--context), the platform's then the higher levels', never an instance's."
+      "description": "Platform values (global.okdp): the context's layers, the platform's (platform.yaml) then its project's (project.yaml), never an instance's."
     },
     "databases": {
       "type": "array",
       "default": [],
       "title": "Databases",
-      "description": "Logical databases, one database-server connection each.",
+      "description": "Logical databases, one database-server connection each, beside the databases of the claims bound to the instance (provisions).",
       "x-ui-group": "Databases",
       "x-ui-order": 1,
       "items": {

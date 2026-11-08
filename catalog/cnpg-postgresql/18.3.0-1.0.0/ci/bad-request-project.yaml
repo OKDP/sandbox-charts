@@ -1,0 +1,6 @@
+# A claim of the project demo whose request the contract refuses.
+claims:
+  gis:
+    contract: database-server
+    provider: cnpg-postgresql
+    request: {extensions: [postgis]}

@@ -6,21 +6,26 @@
 roles: [database-server]
 dependsOn: [pg-operator, external-secrets]
 
+# It provisions database-server connections: a database, its owner role
+# and the role's credentials Secret for each claim bound to its instance
+# (claims: id, contract, namespace, name, request), published under the
+# claim's ID, beside the databases of its values.
+provisions: [database-server]
+
 # The mapping of cnpg-postgresql: one PostgreSQL cluster managed by the
 # CloudNativePG operator, its logical databases (OKDP's own objects), and one
-# database-server connection per database. Former module "main", the chart
-# oci://quay.io/okdp/charts/cnpg-postgresql 0.1.0, whose templates are taken in
-# here: it checked the owner Secrets with `lookup`, which renders nothing under
-# Argo CD. A missing Secret now shows up in the Cluster status instead.
-# labels is the context's.
+# database-server connection per database and per claim. The templates of the
+# chart oci://quay.io/okdp/charts/cnpg-postgresql 0.1.0 are taken in here: it
+# checked the owner Secrets with `lookup`, which renders nothing under Argo CD. A missing Secret now shows up in the
+# Cluster status instead. labels is the context's.
 vars:
   clusterName: ${{ okdpFullname() }}
   # host of the read-write Service CloudNativePG creates: <cluster>-rw.
   host: ${{ clusterName }}-rw.${{ release.namespace }}.svc.cluster.local
   # The cluster default class when unset.
   storageClass: ${{ global.okdp.?storageClass.?data.orValue('') }}
-  # The databases: their name in Kubernetes (Database object, connection),
-  # where "_" becomes "-".
+  # The databases of the values: their name in Kubernetes (Database object,
+  # connection), where "_" becomes "-".
   databases:
     - $for: db in values.databases
       $each:
@@ -29,6 +34,36 @@ vars:
         owner: ${{ db.owner.username }}
         secret: ${{ db.owner.passwordSecret }}
         schemas: ${{ db.?schemas.orValue([]) }}
+  # The databases of the claims bound to the instance: the Database object
+  # and the credentials Secret named after the claim's ID (a Kubernetes
+  # name), the database and its owner role after its SQL name, the
+  # extensions as the claim requests them (the contract's claim schema
+  # allows those the cluster's image ships). The SQL name is the ID, each
+  # dash two underscores, each dot one (sql): an ID's labels neither start
+  # nor end with a dash, so a dot is never next to one, and a run of
+  # underscores reads back as one dot (1) or as dashes (2 each), two IDs
+  # never give one (team.a-db team_a__db, team-a.db team__a_db). When it is
+  # longer than 62 characters (PostgreSQL's 63 at most), or is a database or
+  # an owner of the values, it is its first 46 characters (at most), "_" and
+  # the ID's SHA-256 in hexadecimal, 16 digits or more: 63 characters, never
+  # the length of a claim's SQL name of its own; a claim never fails the
+  # instance, which serves the other claims.
+  claimed:
+    - $for: c in claims
+      $vars:
+        sql: ${{ c.id.replace('-', '__').replace('.', '_') }}
+      $each:
+        id: ${{ c.id }}
+        name: >-
+          ${{ sql.size() <= 62 && !databases.exists(d, d.name == sql || d.owner == sql) ? sql
+              : sql.substring(0, sql.size() < 46 ? sql.size() : 46) + '_'
+                + sha256(c.id).substring(0, 62 - (sql.size() < 46 ? sql.size() : 46)) }}
+        secret: ${{ c.id }}-credentials
+        extensions: ${{ c.request.extensions }}
+  # The SQL names of the claims, to check that no two claims, and no claim
+  # and a database or an owner of the values, give one (errors): only a
+  # SHA-256 prefix's collision, or a name of the values of that form, would.
+  claimNames: ${{ claimed.map(c, c.name) }}
   # The connections table of the usage text.
   outputsText: |-
     | Connection | Database | Owner | Credentials Secret |
@@ -36,8 +71,29 @@ vars:
     ${{ databases.map(d, '| `' + d.object + '` | `' + d.name + '` | `' + d.owner + '` | `' + d.secret + '` |').join('\n') }}
 
     An instance of this namespace references a connection by its name; a consumer in
-    another namespace declares it in a connection file with these values, and its
-    credentials Secret must exist in the consumer's namespace (replicated or delivered by ESO).
+    another namespace claims a database, or declares it as a connection (connections) with
+    these values, and its credentials Secret must exist in the consumer's namespace
+    (delivered by ESO: a claim's, or a key of its namespace in the secret store).
+  claimsText: |-
+    | Claim | Namespace | Database and owner | Extensions | Credentials Secret |
+    |---|---|---|---|---|
+    ${{ claimed.transformList(i, c, '| `' + c.id + '` | `' + claims[i].namespace + '` | `' + c.name + '` | ' + (c.extensions.size() > 0 ? c.extensions.map(e, '`' + e + '`').join(', ') : 'none') + ' | `' + c.secret + '` |').join('\n') }}
+
+    Each claim's connection is published under its ID; its claimers reference it by the
+    claim, never by that name. A database is kept when its claim goes (reclaim policy
+    retain, helm.sh/resource-policy: keep): drop it by hand.
+
+errors:
+  # A claim's SQL name, of its database and of its role, is unique by
+  # construction (claimed): what this check finds is a hash collision, or a
+  # database or an owner of the values named as a hashed SQL name.
+  - $for: n in claimNames.distinct()
+    $each:
+      $if: >-
+        ${{ claimNames.filter(x, x == n).size() > 1 || databases.exists(d, d.name == n || d.owner == n) }}
+      $value: >-
+        cnpg-postgresql: the database and role ${{ n }} of a claim is another claim's, or a database or
+        an owner of databases: rename the one of databases
 
 # OKDP's own objects, rendered by the umbrella (okdp.objects.yaml).
 objects:
@@ -48,7 +104,8 @@ objects:
       labels: ${{ labels }}
     spec:
       instances: ${{ values.instances }}
-      imageName: ghcr.io/cloudnative-pg/postgresql:18.3
+      # By digest (README, Image).
+      imageName: ghcr.io/cloudnative-pg/postgresql:18.3@sha256:5e30290fba3d990b08a9caea6ddb49c661ad8246cbb2688adad7e6cc78df6c3f
       inheritedMetadata:
         labels:
           app.kubernetes.io/instance: ${{ release.name }}
@@ -57,9 +114,10 @@ objects:
         storageClass:
           $if: ${{ storageClass != '' }}
           $value: ${{ str(storageClass) }}
-      # One login role per database owner, its password from the owner Secret.
+      # One login role per database owner, its password from the owner
+      # Secret, then one per claim.
       managed:
-        $if: ${{ databases.size() > 0 }}
+        $if: ${{ databases.size() + claimed.size() > 0 }}
         roles:
           - $for: db in databases
             $each:
@@ -68,6 +126,13 @@ objects:
               login: true
               passwordSecret:
                 name: ${{ db.secret }}
+          - $for: c in claimed
+            $each:
+              name: ${{ c.name }}
+              ensure: present
+              login: true
+              passwordSecret:
+                name: ${{ c.secret }}
   - $for: db in databases
     $each:
       apiVersion: postgresql.cnpg.io/v1
@@ -89,16 +154,54 @@ objects:
                 name: ${{ s }}
                 owner: ${{ db.owner }}
                 ensure: present
+  # The database of each claim, owned by its role, its extensions installed
+  # (CloudNativePG's declarative extensions), retained when the claim is
+  # gone: the claimer may come back, under the same ID.
+  - $for: c in claimed
+    $each:
+      apiVersion: postgresql.cnpg.io/v1
+      kind: Database
+      metadata:
+        name: ${{ c.id }}
+        labels: ${{ labels }}
+        annotations:
+          helm.sh/resource-policy: keep
+      spec:
+        name: ${{ c.name }}
+        owner: ${{ c.name }}
+        databaseReclaimPolicy: retain
+        cluster:
+          name: ${{ clusterName }}
+        extensions:
+          $if: ${{ c.extensions.size() > 0 }}
+          $value:
+            - $for: e in c.extensions
+              $each:
+                name: ${{ e }}
+                ensure: present
+  # The credentials of each claim's role, generated once in the cluster
+  # (ESO): the keys username and password a basic-auth Secret holds, the
+  # label CloudNativePG reloads the role's password on (the Secret appears
+  # after the Cluster), and the credentials label of the connection's
+  # Secret.
+  - $spread: >-
+      ${{ claimed.map(c, okdpGeneratedSecret({'name': c.secret, 'type': 'kubernetes.io/basic-auth',
+          'labels': {'cnpg.io/reload': 'true', 'okdp.io/credentials-database-server': 'true'},
+          'keys': [{'key': 'password', 'length': 32}],
+          'stringData': {'username': c.name}})).flatten() }}
 
 # okdp.info.yaml: no UI.
 instance:
   usage: |
-    PostgreSQL cluster `${{ clusterName }}` (CloudNativePG), read-write endpoint `${{ host }}:5432`.${{ databases.size() > 0 ? '\n\n' + outputsText : '' }}
+    PostgreSQL cluster `${{ clusterName }}` (CloudNativePG), read-write endpoint `${{ host }}:5432`.${{ databases.size() > 0 ? '\n\n' + outputsText : '' }}${{ claimed.size() > 0 ? '\n\n' + claimsText : '' }}
 
-# One database-server connection per database, named <release>-<database>,
-# the owner's Secret as its secretRef. database-server has no internal naming
-# convention: an instance of the namespace references an output by its name, a
-# consumer of another namespace declares it in a connection file.
+# One database-server connection per database of the values, named
+# <release>-<database>, the owner's Secret as its secretRef: an instance of
+# the namespace references it by that name, a consumer of another namespace
+# declares it as a connection. Then one per claim bound to the
+# instance, named after the claim's ID: the database of the claim, the
+# extensions installed, no size (the databases are on the cluster's volume,
+# storageSize), its role's credentials Secret.
 provides:
   - $for: db in databases
     $each:
@@ -110,3 +213,14 @@ provides:
         host: ${{ host }}
         port: 5432
         dbName: ${{ db.name }}
+  - $for: c in claimed
+    $each:
+      contract: database-server
+      name: ${{ c.id }}
+      secretRef: {name: "${{ c.secret }}"}
+      values:
+        engine: postgresql
+        host: ${{ host }}
+        port: 5432
+        dbName: ${{ c.name }}
+        extensions: ${{ c.extensions }}

@@ -1,3 +1,5 @@
-databases:
-  - name: keycloak
-    owner: {username: keycloak, passwordSecret: creds-keycloak-db}
+# The sandbox (cnpg-system/cnpg-postgresql): no database of its own, the
+# provider of the default class of database-server connections
+# (ci/sandbox-platform.yaml). Its claimers are packages of other catalogs
+# (platform-charts' airflow, hive, superset): the case claims tests claims.
+databases: []

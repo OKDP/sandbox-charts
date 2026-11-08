@@ -1,0 +1,3 @@
+# error: - at '/host': 'pg.example.com\nx.host=attacker' does not match pattern '^[^\\r\\n]*$'
+# A database host with a line break (ci/newline-db-host-project.yaml).
+databases: []

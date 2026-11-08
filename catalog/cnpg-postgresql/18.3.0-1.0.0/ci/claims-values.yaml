@@ -1,0 +1,7 @@
+# The provider of the claims of the project demo (ci/claims-project.yaml):
+# the instance of the default class of database-server connections
+# (ci/claims-platform.yaml), of the project's class vector, and the one a
+# claim names; beside a database of its values, published as before.
+databases:
+  - name: app
+    owner: {username: app, passwordSecret: creds-app-db}
