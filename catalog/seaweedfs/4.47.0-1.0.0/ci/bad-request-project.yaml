@@ -1,0 +1,6 @@
+# A claim of the project demo whose request the contract refuses.
+claims:
+  archive:
+    contract: s3
+    provider: seaweedfs
+    request: {quota: 10Gi, paths: [/logs]}

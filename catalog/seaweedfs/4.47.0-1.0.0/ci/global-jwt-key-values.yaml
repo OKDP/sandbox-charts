@@ -1,0 +1,6 @@
+# error: global.seaweedfs: a key of global the platform does not let a project set
+# The project's global replacing the JWT key the package generates
+# (global-jwt-key-project.yaml): refused.
+# The compiler refuses it before the package: global.okdp.policy.projectGlobals
+# lists the global keys of a project (default project, storageClass), and
+# seaweedfs is not one.

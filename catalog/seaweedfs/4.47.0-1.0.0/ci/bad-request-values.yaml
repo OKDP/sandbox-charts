@@ -1,0 +1,4 @@
+# error: claims.archive: claim (s3): the request does not meet the contract's claim schema (x-okdp-claim):
+# A named claim requests what the contract's claim schema does not allow
+# (ci/bad-request-project.yaml): a quota, which the stores do not grant, and
+# a path with a leading slash.

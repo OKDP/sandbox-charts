@@ -1,0 +1,3 @@
+# The filer UI open to the platform's administrators (oidcAllowedRoles empty), here
+# ops (ci/admins-platform.yaml): the groups of global.okdp.access.admins.
+oidcAllowedRoles: ""

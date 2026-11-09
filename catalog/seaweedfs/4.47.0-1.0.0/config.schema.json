@@ -5,50 +5,16 @@
   "properties": {
     "global": {
       "type": "object",
-      "description": "Platform values (global.okdp): the context's layers (--context), the platform's then the higher levels', never an instance's."
+      "description": "Platform values (global.okdp): the context's layers, the platform's (platform.yaml) then its project's (project.yaml), never an instance's."
     },
-    "username": {
+    "rootCredentialsSecret": {
       "type": "string",
-      "default": "admin",
-      "title": "Username",
-      "description": "Basic auth user of the filer UI.",
-      "x-ui-group": "Admin",
-      "x-ui-order": 1,
-      "x-ui-columns": 2
-    },
-    "password": {
-      "type": "string",
-      "minLength": 8,
-      "title": "Password",
-      "description": "Basic auth password of the filer UI. No default: a password shipped with a chart ends up in production.",
-      "x-ui-group": "Admin",
-      "x-ui-order": 2,
-      "x-ui-columns": 2,
-      "x-ui-widget": "password"
-    },
-    "rootAccessKey": {
-      "type": "string",
-      "default": "okdpadmin",
-      "minLength": 3,
-      "maxLength": 20,
-      "title": "Root access key",
-      "description": "Access key of the store's root (Admin) identity, used by the bucket provisioning.",
+      "default": "",
+      "title": "Root credentials Secret",
+      "description": "Secret of this namespace holding the keys accessKey and secretKey of the store's root (Admin) identity. Empty: <release>-root-credentials, generated once in the cluster (ESO Password generators: an access key of 20 characters, a secret key of 40).",
       "x-ui-group": "Admin",
       "x-ui-order": 3,
-      "x-ui-columns": 2,
       "x-ui-advanced": true
-    },
-    "rootSecretKey": {
-      "type": "string",
-      "minLength": 8,
-      "maxLength": 40,
-      "title": "Root secret key",
-      "description": "Secret key of the root identity. No default.",
-      "x-ui-group": "Admin",
-      "x-ui-order": 4,
-      "x-ui-columns": 2,
-      "x-ui-advanced": true,
-      "x-ui-widget": "password"
     },
     "stsRoleArn": {
       "type": "string",
@@ -62,7 +28,7 @@
       "type": "string",
       "default": "",
       "title": "Console host",
-      "description": "Host name of the filer UI, the ingress suffix is appended. Default: seaweedfs-<namespace>.",
+      "description": "Host name of the filer UI, behind the sign-in proxy (the platform's OIDC; not exposed without it), the ingress suffix is appended. Default: seaweedfs.<namespace>. A non-privileged project's host is <label>.<namespace> (global.okdp.policy.ingressHosts lists others).",
       "x-ui-group": "Admin",
       "x-ui-order": 6,
       "x-ui-advanced": true,
@@ -72,11 +38,27 @@
       "type": "string",
       "default": "",
       "title": "S3 API host",
-      "description": "Host name of the S3 API, the ingress suffix is appended. Default: seaweedfs-<namespace>-api.",
+      "description": "Host name of the S3 API, the ingress suffix is appended. Default: seaweedfs-api.<namespace>. The compiler refuses a non-privileged project's host that is not <label>.<namespace> (unless the platform lists it in global.okdp.policy.ingressHosts).",
       "x-ui-group": "Admin",
       "x-ui-order": 7,
       "x-ui-advanced": true,
       "x-ui-columns": 2
+    },
+    "oidcAllowedRoles": {
+      "type": "string",
+      "default": "",
+      "title": "Allowed roles",
+      "description": "Comma-separated claim values (oidcRolesClaim) allowed to sign in to the filer UI, which reads every bucket; empty: the platform's administrators (global.okdp.access.admins).",
+      "x-ui-group": "Admin",
+      "x-ui-order": 8
+    },
+    "oidcRolesClaim": {
+      "type": "string",
+      "default": "groups",
+      "title": "Roles claim",
+      "description": "Token claim carrying the values of oidcAllowedRoles.",
+      "x-ui-group": "Admin",
+      "x-ui-order": 9
     },
     "volumeReplicas": {
       "type": "integer",
@@ -135,7 +117,7 @@
       "type": "array",
       "default": [],
       "title": "Grants",
-      "description": "S3 identities, one per principal. Its keys are read by ESO from credentialsSecret (a Secret of this namespace). actions are SeaweedFS verbs (Read, Write, List, Tagging, Admin), scoped to buckets when buckets is set; sts marks a principal allowed to assume the STS role (SeaweedFS only grants it to an Admin identity).",
+      "description": "S3 identities, one per principal. Its keys are read by ESO from credentialsSecret (a Secret of this namespace). actions are SeaweedFS verbs (Read, Write, List, Tagging, Admin), scoped to buckets when buckets is set; sts marks a principal allowed to assume the STS role (SeaweedFS only grants it to an Admin identity). principal: letters, digits, '_', '.', '@' and '-'; buckets: bucket names.",
       "x-ui-group": "Access",
       "x-ui-order": 1,
       "items": {
@@ -147,7 +129,9 @@
         "additionalProperties": false,
         "properties": {
           "principal": {
-            "type": "string"
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9_.@-]*$",
+            "maxLength": 128
           },
           "credentialsSecret": {
             "type": "object",
@@ -174,13 +158,14 @@
           "actions": {
             "type": "array",
             "items": {
-              "type": "string"
+              "type": "string",
+              "pattern": "^[A-Za-z]+$"
             }
           },
           "buckets": {
             "type": "array",
             "items": {
-              "type": "string"
+              "$ref": "#/definitions/bucketName"
             }
           },
           "sts": {
@@ -194,7 +179,7 @@
       "type": "array",
       "default": [],
       "title": "Buckets",
-      "description": "Buckets created at startup. paths seeds prefixes for consumers that require them to exist beforehand.",
+      "description": "Buckets created at install and upgrade (OKDP's provisioning Job). name: an S3 bucket name (3 to 63 lower-case letters, digits, dots and hyphens, a letter or a digit first and last, no '..', no IP address). paths seeds prefixes for consumers that require them to exist beforehand: segments of letters, digits, '.', '_' and '-' joined by single slashes, none leading or trailing (the s3 contract's). anonymousRead, objectLock, versioning, ttl: as the chart's createBuckets had them.",
       "x-ui-group": "Access",
       "x-ui-order": 2,
       "items": {
@@ -205,16 +190,34 @@
         "additionalProperties": false,
         "properties": {
           "name": {
-            "type": "string"
+            "$ref": "#/definitions/bucketName"
           },
           "anonymousRead": {
             "type": "boolean",
             "default": false
           },
+          "objectLock": {
+            "type": "boolean",
+            "default": false,
+            "description": "S3 Object Lock (WORM), versioning with it; once on, it cannot be turned off."
+          },
+          "versioning": {
+            "enum": [
+              "Enabled",
+              "Suspended"
+            ],
+            "description": "The bucket's versioning; unset: left as it is."
+          },
+          "ttl": {
+            "type": "string",
+            "pattern": "^[0-9]+[mhdwMy]$",
+            "description": "The TTL of the bucket's new objects: a number and a unit (m, h, d, w, M, y)."
+          },
           "paths": {
             "type": "array",
+            "uniqueItems": true,
             "items": {
-              "type": "string"
+              "$ref": "#/definitions/path"
             }
           }
         }
@@ -224,7 +227,7 @@
       "type": "string",
       "default": "",
       "title": "Published credentials Secret",
-      "description": "secretRef of the published s3 connection, a Secret consumers can use (e.g. one replicated to every namespace). Empty: none, each consumer brings its own identity.",
+      "description": "secretRef of the published s3 connection, a Secret consumers can use (one of that name in each consumer's namespace). Empty: none, each consumer brings its own identity.",
       "x-ui-group": "Access",
       "x-ui-order": 3,
       "x-ui-advanced": true
@@ -242,7 +245,7 @@
         "seaweedfs": {
           "type": "object",
           "title": "seaweedfs",
-          "description": "Values of the seaweedfs chart 4.47.0 (https://seaweedfs.github.io/seaweedfs/helm), for example image, resources, nodeSelector, tolerations, master/volume/filer/s3 settings, ingress annotations. Refused: nameOverride, fullnameOverride, master.enabled/port, volume.enabled/resizeHook, filer.enabled/port/s3, filer.ingresses.http.enabled/className/host/tls and its nginx.ingress.kubernetes.io/auth-* annotations, WEED_MYSQL_ENABLED in filer.extraEnvironmentVars and filer.secretExtraEnvironmentVars, s3.enabled/port/enableAuth/existingConfigSecret/extraVolumes/extraVolumeMounts, s3.ingress.enabled/className/host/tls, the s3 annotation secret.reloader.stakater.com/reload, sftp, allInOne, networkPolicy.enabled, cosi. Appended to the lists the service sets: s3.createBuckets, s3.extraArgs.",
+          "description": "Values of the seaweedfs chart 4.47.0 (https://seaweedfs.github.io/seaweedfs/helm), for example image, resources, nodeSelector, tolerations, master/volume/filer/s3 settings, ingress annotations. Refused: nameOverride, fullnameOverride, master.enabled/port, volume.enabled/resizeHook, filer.enabled/port/s3, filer.ingresses.http.enabled/className/host/tls and its nginx.ingress.kubernetes.io/auth-* annotations, WEED_MYSQL_ENABLED in filer.extraEnvironmentVars and filer.secretExtraEnvironmentVars, s3.enabled/port/enableAuth/existingConfigSecret/extraVolumes/extraVolumeMounts, s3.ingress.enabled/className/host/tls, the s3 annotation secret.reloader.stakater.com/reload, s3.createBuckets (the buckets are the parameter's: the chart's bucket hook is off), sftp, allInOne, networkPolicy.enabled, cosi. Appended to the list the service sets: s3.extraArgs. Refused too: the JWT keys of the components' environment (WEED_JWT_SIGNING_KEY, WEED_JWT_FILER_SIGNING_KEY).",
           "default": {},
           "x-ui-widget": "yaml",
           "x-ui-order": 1,
@@ -255,10 +258,6 @@
       }
     }
   },
-  "required": [
-    "password",
-    "rootSecretKey"
-  ],
   "additionalProperties": false,
   "definitions": {
     "noTemplate": {
@@ -278,6 +277,26 @@
       "items": {
         "$ref": "#/definitions/noTemplate"
       }
+    },
+    "bucketName": {
+      "type": "string",
+      "description": "An S3 bucket name: 3 to 63 lower-case letters, digits, dots and hyphens, a letter or a digit first and last, no '..', no IP address.",
+      "pattern": "^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$",
+      "not": {
+        "anyOf": [
+          {
+            "pattern": "\\.\\."
+          },
+          {
+            "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$"
+          }
+        ]
+      }
+    },
+    "path": {
+      "type": "string",
+      "description": "A prefix of a bucket, the s3 contract's: segments joined by single slashes, none leading or trailing.",
+      "pattern": "^[A-Za-z0-9_][A-Za-z0-9._-]*(/[A-Za-z0-9_][A-Za-z0-9._-]*)*$"
     }
   }
 }

@@ -1,0 +1,7 @@
+# error: seaweedfs: upstream.seaweedfs.master.extraEnvironmentVars.WEED_JWT_SIGNING_KEY: master.extraEnvironmentVars.WEED_JWT_SIGNING_KEY is set by the platform and cannot be changed
+# A component's environment replacing the JWT key the package generates
+# with a known one: refused (protect).
+upstream:
+  seaweedfs:
+    master:
+      extraEnvironmentVars: {WEED_JWT_SIGNING_KEY: known}

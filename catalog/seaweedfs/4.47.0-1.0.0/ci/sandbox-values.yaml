@@ -1,8 +1,7 @@
-# The sandbox store (component 20-storage, release default-storage).
-password: sandbox-filer-pw
-rootSecretKey: sandbox-seaweedfs-root
-consoleHost: storage-default
-apiHost: storage-default-api
+# A platform's S3 store as an instance (the sandbox's default/storage), here
+# in the project demo: its hosts are <label>.demo.
+consoleHost: storage.demo
+apiHost: storage-api.demo
 grants:
   - principal: platformAdmin
     credentialsSecret: {name: creds-seaweedfs-s3, accessKeyKey: accessKey, secretKeyKey: secretKey}

@@ -1,7 +1,8 @@
 # The values of the seaweedfs chart computed from the parameters, over
-# seaweedfs.defaults.yaml (the former KuboCD module "main"): master, volume,
-# filer (UI behind basic auth) and the standalone S3 gateway; its bucket hook
-# creates `buckets`.
+# seaweedfs.defaults.yaml: master, volume,
+# filer (its UI behind OKDP's sign-in proxy, okdp.yaml) and the standalone S3 gateway. Its bucket hook
+# is off (no s3.createBuckets, protected): OKDP's provisioning Job creates
+# `buckets` and the buckets of the claims (okdp.yaml).
 seaweedfs:
   nameOverride: ${{ release.name }}
   fullnameOverride: ${{ release.name }}
@@ -9,11 +10,33 @@ seaweedfs:
     seaweedfs:
       image:
         name: chrislusf/seaweedfs
-      # Off (upstream default): the security ConfigMap reads the cluster
-      # with lookup.
+      # Off (upstream default): its security ConfigMap writes random JWT
+      # keys it reads back from the cluster with lookup (helm template and
+      # install differ), and its gRPC mTLS leaves a hook without a client
+      # certificate. The JWT keys are the environment's instead
+      # (extraEnvironmentVars, below).
       enableSecurity: false
+      # The JWT keys of every component,
+      # from the Secret generated once by ESO (okdp.yaml, objects): the
+      # master signs the volume servers' writes (jwt.signing), the filer
+      # takes the writes over HTTP signed only (jwt.filer_signing: the S3
+      # gateway signs its own). The chart's own variables (the cluster's
+      # master and filer) stay: maps merge.
+      extraEnvironmentVars:
+        WEED_JWT_SIGNING_KEY:
+          secretKeyRef: {name: "${{ jwtSecret }}", key: volumeWrite}
+        WEED_JWT_FILER_SIGNING_KEY:
+          secretKeyRef: {name: "${{ jwtSecret }}", key: filerWrite}
       # Named after the release (upstream default: seaweedfs).
       serviceAccountName: ${{ release.name }}
+      # Off (upstream default: on): the ClusterRole <release>-rw-cr, pods
+      # read and written in every namespace, and its ClusterRoleBinding to
+      # the ServiceAccount, a leftover of a migration of the chart that no
+      # component uses (no seaweedfs binary speaks to the Kubernetes API),
+      # cluster-scoped objects a project's confined deployer refuses. Nor
+      # the ServiceAccount's token mounted in the pods: none reads it.
+      createClusterRole: false
+      automountServiceAccountToken: false
   image:
     tag: ${{ imageTag }}
   master:
@@ -38,16 +61,6 @@ seaweedfs:
     logs:
       storageClass: ${{ class }}
       size: ${{ str(values.filerLogStorage) }}Gi
-    ingresses:
-      http:
-        className: ${{ global.okdp.ingress.className }}
-        annotations:
-          $merge: ${{ platform.ingressAnnotations }}
-          nginx.ingress.kubernetes.io/auth-secret: ${{ filerAuthSecret }}
-        host: ${{ consoleHost }}
-        tls:
-          - secretName: ${{ okdpFullname('filer-tls') }}
-            hosts: ["${{ consoleHost }}"]
   s3:
     # Rendered by ESO from the grants' Secrets (OKDP's objects, okdp.yaml).
     existingConfigSecret: ${{ s3ConfigSecret }}
@@ -59,11 +72,6 @@ seaweedfs:
       secret.reloader.stakater.com/reload: ${{ s3ConfigSecret }},${{ iamSecret }}
     podAnnotations:
       checksum/iam: ${{ sha256(iamTemplate) }}
-    createBuckets:
-      - $for: b in buckets
-        $each:
-          name: ${{ b.name }}
-          anonymousRead: ${{ b.?anonymousRead.orValue(false) }}
     extraVolumes: |
       - name: auth-config
         secret:

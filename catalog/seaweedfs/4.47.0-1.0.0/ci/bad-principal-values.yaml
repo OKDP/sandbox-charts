@@ -1,0 +1,7 @@
+# error: at '/grants/0/principal': 'x","actions":["Admin"],"name":"y' does not match pattern '^[A-Za-z0-9][A-Za-z0-9_.@-]*$'
+# A grant whose principal would close its string in the S3 configuration
+# (JSON) and add actions: not a principal name, refused by the schema.
+grants:
+  - principal: 'x","actions":["Admin"],"name":"y'
+    credentialsSecret: {name: creds-x-s3, accessKeyKey: accessKey, secretKeyKey: secretKey}
+    actions: [Read]

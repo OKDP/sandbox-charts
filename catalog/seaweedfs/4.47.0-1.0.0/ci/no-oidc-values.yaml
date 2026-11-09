@@ -1,0 +1,2 @@
+# Without the platform's OIDC (no-oidc-platform.yaml): no sign-in proxy, no
+# ingress of the filer UI, no URL in okdp.info.yaml; the S3 API as always.

@@ -1,0 +1,5 @@
+# The platform's administrators of the case admins.
+global:
+  okdp:
+    access:
+      admins: [ops]

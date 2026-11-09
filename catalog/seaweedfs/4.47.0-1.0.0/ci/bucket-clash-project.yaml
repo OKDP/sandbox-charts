@@ -1,0 +1,6 @@
+# A claim bound to demo-seaweedfs whose bucket, named after its ID, is a
+# bucket of its values.
+claims:
+  scratch:
+    contract: s3
+    provider: seaweedfs

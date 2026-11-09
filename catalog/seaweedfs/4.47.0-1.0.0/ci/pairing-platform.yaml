@@ -1,0 +1,9 @@
+# The instance under test, demo-seaweedfs, the provider of the default class
+# of s3 connections, standard.
+global:
+  okdp:
+    provisioning:
+      s3:
+        default: standard
+        classes:
+          standard: {provider: demo/seaweedfs}

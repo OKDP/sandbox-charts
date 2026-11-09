@@ -1,0 +1,6 @@
+# error: at '/buckets/0/name': 'b\'$(id)' does not match pattern '^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$'
+# A bucket of the values whose name would break out of the provisioning
+# Job's weed shell input (a quote, a command substitution): not an S3
+# bucket name, refused by the schema.
+buckets:
+  - {name: "b'$(id)"}

@@ -1,0 +1,12 @@
+# The provider of the claims of the project demo (ci/claims-project.yaml):
+# the instance of the default class of s3 connections
+# (ci/claims-platform.yaml), of the project's class events, and the one a
+# claim names; beside a grant and a bucket of its values, and its own s3
+# output, published as before.
+grants:
+  - principal: platformAdmin
+    credentialsSecret: {name: creds-seaweedfs-s3, accessKeyKey: accessKey, secretKeyKey: secretKey}
+    actions: [Admin]
+buckets:
+  - {name: shared, paths: [incoming]}
+outputSecretRef: creds-seaweedfs-s3

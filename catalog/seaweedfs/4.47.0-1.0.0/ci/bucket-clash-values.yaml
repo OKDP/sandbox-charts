@@ -1,0 +1,5 @@
+# error: seaweedfs: bucket demo.scratch is the bucket of a claim (its ID): rename the one of buckets
+# A bucket of the values named as the bucket of the claim scratch of the
+# project demo (ci/bucket-clash-project.yaml), its ID demo.scratch.
+buckets:
+  - {name: demo.scratch}

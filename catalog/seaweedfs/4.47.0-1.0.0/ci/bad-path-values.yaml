@@ -1,0 +1,5 @@
+# error: at '/buckets/0/paths/0': 'x`id`' does not match pattern '^[A-Za-z0-9_][A-Za-z0-9._-]*(/[A-Za-z0-9_][A-Za-z0-9._-]*)*$'
+# A path to seed with a command substitution: not a path of the s3
+# contract's pattern, refused by the schema.
+buckets:
+  - {name: logs, paths: ['x`id`']}

@@ -1,0 +1,49 @@
+# The root identity, eleven grants and two claims: fourteen identities whose
+# keys ESO reads by position, past nine so that .id1 and .id10 are told
+# apart. The compile fails when the S3 configuration's template and the keys
+# ESO reads do not pair (errors of okdp.yaml).
+grants:
+  - principal: app1
+    credentialsSecret: {name: creds-app1-s3, accessKeyKey: ak1, secretKeyKey: sk1}
+    actions: [read, list]
+    buckets: [data1]
+  - principal: app2
+    credentialsSecret: {name: creds-app2-s3, accessKeyKey: ak2, secretKeyKey: sk2}
+    actions: [read, list]
+    buckets: [data2]
+  - principal: app3
+    credentialsSecret: {name: creds-app3-s3, accessKeyKey: ak3, secretKeyKey: sk3}
+    actions: [read, list]
+    buckets: [data3]
+  - principal: app4
+    credentialsSecret: {name: creds-app4-s3, accessKeyKey: ak4, secretKeyKey: sk4}
+    actions: [read, list]
+    buckets: [data4]
+  - principal: app5
+    credentialsSecret: {name: creds-app5-s3, accessKeyKey: ak5, secretKeyKey: sk5}
+    actions: [read, list]
+    buckets: [data5]
+  - principal: app6
+    credentialsSecret: {name: creds-app6-s3, accessKeyKey: ak6, secretKeyKey: sk6}
+    actions: [read, list]
+    buckets: [data6]
+  - principal: app7
+    credentialsSecret: {name: creds-app7-s3, accessKeyKey: ak7, secretKeyKey: sk7}
+    actions: [read, list]
+    buckets: [data7]
+  - principal: app8
+    credentialsSecret: {name: creds-app8-s3, accessKeyKey: ak8, secretKeyKey: sk8}
+    actions: [read, list]
+    buckets: [data8]
+  - principal: app9
+    credentialsSecret: {name: creds-app9-s3, accessKeyKey: ak9, secretKeyKey: sk9}
+    actions: [read, list]
+    buckets: [data9]
+  - principal: app10
+    credentialsSecret: {name: creds-app10-s3, accessKeyKey: ak10, secretKeyKey: sk10}
+    actions: [read, list]
+    buckets: [data10]
+  - principal: app11
+    credentialsSecret: {name: creds-app11-s3, accessKeyKey: ak11, secretKeyKey: sk11}
+    actions: [read, list]
+    buckets: [data11]

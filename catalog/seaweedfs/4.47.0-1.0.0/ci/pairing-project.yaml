@@ -1,0 +1,8 @@
+# Two claims of the project demo, bound to demo-seaweedfs: their identities
+# come after the grants' (ci/pairing-values.yaml).
+claims:
+  lake:
+    contract: s3
+  scratch:
+    contract: s3
+    provider: seaweedfs

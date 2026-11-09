@@ -1,7 +1,7 @@
-# Scoped grants, an STS principal, buckets with seeded paths.
-password: another-filer-pw
-rootAccessKey: root
-rootSecretKey: another-root-secret
+# Scoped grants, an STS principal, buckets with seeded paths, a bucket with
+# its TTL and versioning, one with Object Lock; the root identity's keys in
+# a Secret of the namespace, not generated.
+rootCredentialsSecret: creds-root-s3
 volumeReplicas: 2
 volumeStorage: "20"
 grants:
@@ -17,3 +17,5 @@ buckets:
   - {name: spark-logs, paths: [events]}
   - {name: lake}
   - {name: public, anonymousRead: true}
+  - {name: archive, ttl: 30d, versioning: Enabled}
+  - {name: records, objectLock: true}

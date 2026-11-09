@@ -1,0 +1,5 @@
+# No platform administrator: no group may sign in to the filer UI.
+global:
+  okdp:
+    access:
+      admins: []

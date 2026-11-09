@@ -1,0 +1,5 @@
+# error: at '/buckets/0/ttl': '1d -apply; fs.rm -r /buckets' does not match pattern '^[0-9]+[mhdwMy]$'
+# A ttl the provisioning Job gives weed shell: a TTL (a number and a unit)
+# only, refused by the schema (and by the Job's script).
+buckets:
+  - {name: archive, ttl: "1d -apply; fs.rm -r /buckets"}

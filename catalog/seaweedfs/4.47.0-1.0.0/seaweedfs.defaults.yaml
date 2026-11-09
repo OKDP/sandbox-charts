@@ -24,15 +24,11 @@ filer:
     type: persistentVolumeClaim
   logs:
     type: persistentVolumeClaim
+  # The filer UI is exposed by OKDP's ingress of the sign-in proxy
+  # (okdp.yaml), never by the chart's: the filer has no login of its own.
   ingresses:
     http:
-      enabled: true
-      annotations:
-        nginx.ingress.kubernetes.io/proxy-body-size: "130m"
-        nginx.ingress.kubernetes.io/auth-type: basic
-        nginx.ingress.kubernetes.io/auth-realm: "Authentication Required"
-      path: "/"
-      pathType: Prefix
+      enabled: false
 s3:
   enabled: true
   enableAuth: true

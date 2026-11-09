@@ -1,0 +1,23 @@
+# The project demo. A class of its own, events, buckets with the prefix of
+# Spark's event logs seeded (request: a key the class fixes, which its
+# claims may not set); and its named claims, each bound to demo-seaweedfs
+# and given to it whether an instance references it or not:
+# - lake, of the default class (standard), with two prefixes;
+# - spark-events, of the class events;
+# - scratch, of the provider it names, whatever the classes.
+global:
+  okdp:
+    provisioning:
+      s3:
+        classes:
+          events: {provider: seaweedfs, request: {paths: [spark-events]}}
+claims:
+  lake:
+    contract: s3
+    request: {paths: [raw, curated/v1]}
+  spark-events:
+    contract: s3
+    class: events
+  scratch:
+    contract: s3
+    provider: seaweedfs

@@ -1,0 +1,4 @@
+# error: okdpSignInProxy: no allowed group
+# oidcAllowedRoles empty and no platform administrator: no group could sign in
+# to the filer UI, which reads every bucket, the sign-in proxy refuses.
+oidcAllowedRoles: ""

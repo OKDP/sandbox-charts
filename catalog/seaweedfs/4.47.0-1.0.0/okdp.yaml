@@ -4,10 +4,14 @@
 
 roles: [storage]
 dependsOn: [ingress, external-secrets]
+# It provisions s3 connections: a bucket and an S3 identity limited to it,
+# its keys a generated Secret, for each claim bound to its instance (claims:
+# id, contract, namespace, name, request), published under the claim's ID.
+provisions: [s3]
 require:
   - ingress.suffix
   - ingress.className
-  - certificateIssuers.selfSigned.name
+  - tls.clusterIssuer
   - storageClass.workspace
 defaults:
   seaweedfs: seaweedfs.defaults.yaml
@@ -18,63 +22,118 @@ upstream:
   # -filer-client) and the components they need; the S3 authentication (the
   # ESO-written configuration Secret, the IAM/STS file mounted through
   # s3.extraVolumes/extraVolumeMounts, strings that cannot be appended to);
-  # the hosts and TLS of the ingresses; and every switch that keeps a
+  # the hosts and TLS of the ingresses; s3.createBuckets, which would turn
+  # on the chart's bucket hook (a pod without securityContext, the default
+  # ServiceAccount's token mounted, the S3 configuration Secret too): the
+  # buckets are the parameter's, created by OKDP's provisioning Job; and
+  # every switch that keeps a
   # template using lookup, a random function or a templated hook off, so
   # that helm install and helm template render the same objects: filer.s3,
   # volume.resizeHook, sftp, allInOne, networkPolicy.enabled, the MySQL filer
   # store (WEED_MYSQL_ENABLED: its credentials Secret is random), plus cosi
-  # (cluster-scoped objects). Annotation keys contain dots, so they are
-  # written in brackets: the basic auth annotations of the filer ingress
-  # (every auth-* one: an instance could otherwise switch the auth type or
-  # point it elsewhere) and the Reloader annotation of the S3 gateway; an
-  # annotations map given as null or a non-map, which would drop them, is
-  # refused too.
+  # (cluster-scoped objects); the chart's filer ingress, off: the filer UI is
+  # behind OKDP's sign-in proxy only (objects); the JWT keys of the
+  # components (values.cel.yaml), which a component's environment would
+  # replace. Annotation keys contain dots,
+  # so they are written in brackets: the Reloader annotation of the S3
+  # gateway; an annotations map given as null or a non-map, which would drop
+  # it, is refused too.
   seaweedfs:
     protect: [nameOverride, fullnameOverride, master.enabled, master.port, volume.enabled,
               volume.resizeHook, filer.enabled, filer.port, filer.s3, filer.ingresses.http.enabled,
-              filer.ingresses.http.className, filer.ingresses.http.host, filer.ingresses.http.tls,
-              'filer.ingresses.http.annotations["nginx.ingress.kubernetes.io/auth-*"]',
               filer.extraEnvironmentVars.WEED_MYSQL_ENABLED,
               filer.secretExtraEnvironmentVars.WEED_MYSQL_ENABLED,
               s3.enabled, s3.port, s3.enableAuth, s3.existingConfigSecret, s3.extraVolumes,
               s3.extraVolumeMounts, 's3.annotations["secret.reloader.stakater.com/reload*"]',
+              s3.createBuckets,
               s3.ingress.enabled, s3.ingress.className, s3.ingress.host,
-              s3.ingress.tls, sftp, allInOne, networkPolicy.enabled, cosi]
-    # The buckets and the S3 gateway arguments: an instance adds to them.
-    append: [s3.createBuckets, s3.extraArgs]
+              s3.ingress.tls, sftp, allInOne, networkPolicy.enabled, cosi,
+              master.extraEnvironmentVars.WEED_JWT_SIGNING_KEY,
+              master.extraEnvironmentVars.WEED_JWT_FILER_SIGNING_KEY,
+              volume.extraEnvironmentVars.WEED_JWT_SIGNING_KEY,
+              volume.extraEnvironmentVars.WEED_JWT_FILER_SIGNING_KEY,
+              filer.extraEnvironmentVars.WEED_JWT_SIGNING_KEY,
+              filer.extraEnvironmentVars.WEED_JWT_FILER_SIGNING_KEY,
+              filer.secretExtraEnvironmentVars.WEED_JWT_SIGNING_KEY,
+              filer.secretExtraEnvironmentVars.WEED_JWT_FILER_SIGNING_KEY,
+              s3.extraEnvironmentVars.WEED_JWT_SIGNING_KEY,
+              s3.extraEnvironmentVars.WEED_JWT_FILER_SIGNING_KEY]
+    # The S3 gateway arguments: an instance adds to them.
+    append: [s3.extraArgs]
 
-# The mapping of seaweedfs: the values of the seaweedfs chart (the former
-# KuboCD module "main") are in values.cel.yaml, the fixed ones in
-# seaweedfs.defaults.yaml; OKDP's own objects (the former modules auth-config
-# and provisioning), and the s3 connection the instance publishes, below.
+# The mapping of seaweedfs: the values of the seaweedfs chart are in
+# values.cel.yaml, the fixed ones in seaweedfs.defaults.yaml; OKDP's own
+# objects (the S3 and IAM configuration, the provisioning Job and the sign-in
+# proxy of the filer UI), and the s3
+# connections the instance publishes, its own and its claims', below.
 # ${{ ... }} is a CEL expression; the ESO templates ({{ ... }}) and the
 # shell's $(...) and ${...} stay literal.
 vars:
   suffix: ${{ global.okdp.ingress.suffix }}
   class: ${{ global.okdp.storageClass.workspace }}
-  # Ingress hosts: <consoleHost|apiHost>.<suffix>, default seaweedfs-<namespace>[-api].
-  consoleHost: ${{ first([values.consoleHost, 'seaweedfs-' + release.namespace]) }}.${{ suffix }}
-  apiHost: ${{ first([values.apiHost, 'seaweedfs-' + release.namespace + '-api']) }}.${{ suffix }}
+  # Ingress hosts: <consoleHost|apiHost>.<suffix>, default
+  # seaweedfs.<namespace> and seaweedfs-api.<namespace>: a non-privileged
+  # project's host is one label, then <namespace>.<suffix>
+  # (global.okdp.policy.ingressHosts lists the others).
+  consoleHost: ${{ first([values.consoleHost, 'seaweedfs.' + release.namespace]) }}.${{ suffix }}
+  apiHost: ${{ first([values.apiHost, 'seaweedfs-api.' + release.namespace]) }}.${{ suffix }}
   internalUrl: http://${{ okdpFullname('s3') }}.${{ release.namespace }}.svc.cluster.local:8333
   # Names.
   s3ConfigSecret: ${{ okdpFullname('s3-config') }}
   iamSecret: ${{ okdpFullname('auth-config') }}
   stsKeySecret: ${{ okdpFullname('sts-signing-key') }}
-  filerAuthSecret: ${{ okdpFullname('filer-basic-auth') }}
-  rootSecret: ${{ okdpFullname('root-credentials') }}
+  # The JWT keys of the components (values.cel.yaml, global), generated once.
+  jwtSecret: ${{ okdpFullname('jwt-signing-keys') }}
+  # The filer UI: the filer has no login of its own, and reads and writes
+  # every bucket. It is exposed behind an oauth2-proxy signing users in with
+  # the platform's OIDC (its OAuth client oidcClients, read from
+  # platform.oidcClientSecret), never behind an ingress controller's basic
+  # auth, which another controller ignores; not exposed without OIDC.
+  oidc: ${{ platform.oidc.enabled }}
+  proxyName: ${{ okdpFullname('filer-proxy') }}
+  proxySecret: ${{ okdpFullname('filer-oauth2-proxy') }}
+  proxyLabels: ${{ okdpLabels('filer-proxy') }}
+  proxySelector: ${{ okdpSelectorLabels('filer-proxy') }}
+  # Who signs in to the filer UI, which reads every bucket of the store:
+  # the claim values of oidcAllowedRoles, else the platform's
+  # administrators. Never empty: okdpSignInProxy refuses no group.
+  allowedRoles: >-
+    ${{ values.oidcAllowedRoles.split(',').map(r, r.trim()).filter(r, r != '') }}
+  # The root (Admin) identity's keys (accessKey, secretKey): the Secret
+  # rootCredentialsSecret names, else <release>-root-credentials, generated
+  # once (objects).
+  rootSecret: ${{ first([values.?rootCredentialsSecret.orValue(''), okdpFullname('root-credentials')]) }}
   grantsReader: ${{ okdpFullname('grants') }}
-  # Image tag of the store, also used by the provisioning Job (weed shell).
-  imageTag: "4.47"
+  # Image tag of the store, also used by the provisioning Job (weed shell),
+  # with its digest: the chart makes <name>:<tag>, a tag with a digest.
+  imageTag: "4.47@sha256:ce9e796f1fe6f06968f4c04bdaf8f678dad9c8acdfef3d244133d71bfa6bf882"
   grants: ${{ values.?grants.orValue([]) }}
   buckets: ${{ values.?buckets.orValue([]) }}
+  # The claims bound to the instance: a bucket each, named after the claim's
+  # ID (a valid bucket name), the paths it requests seeded, and an S3
+  # identity of the same name, its keys the generated Secret of its
+  # connection (provides: <id>-s3-credentials).
+  claimed:
+    - $for: c in claims
+      $each:
+        id: ${{ c.id }}
+        bucket: ${{ c.id }}
+        paths: ${{ c.request.paths }}
+        secret: ${{ c.id }}-s3-credentials
   stsEnabled: ${{ grants.exists(g, g.?sts.orValue(false) == true) }}
-  # The S3 identities, credentials left out: the root identity, then one per
-  # grant (the former auth-config module values). An action is a SeaweedFS
-  # verb (first letter upper-cased, as Helm's title), scoped as <Verb>:<bucket>
-  # when the grant lists buckets; sts implies Admin (SeaweedFS only lets an
-  # Admin assume the role). Duplicates go, the first one stays.
-  identities:
-    - {name: seaweedfs, actions: [Admin]}
+  # The S3 principals, ONE list: the root identity, then one per grant,
+  # then one per claim. Each holds what
+  # the S3 configuration says of it (name, actions) and where ESO reads its
+  # keys (the Secret and the keys of its access key and secret key); the
+  # configuration's identities and ESO's key references below are both
+  # projected from it, by position, so they cannot diverge (errors checks the
+  # rendered template against the references all the same). An action is a
+  # SeaweedFS verb (first letter upper-cased, as Helm's title), scoped as
+  # <Verb>:<bucket> when the grant lists buckets; sts implies Admin (SeaweedFS
+  # only lets an Admin assume the role). Duplicates go, the first one stays.
+  # A claim's identity reads, lists and writes its bucket only.
+  principals:
+    - {name: seaweedfs, actions: [Admin], secret: "${{ rootSecret }}", accessKey: accessKey, secretKey: secretKey}
     - $for: g in grants
       $vars:
         scope: ${{ g.?buckets.orValue([]) }}
@@ -84,14 +143,24 @@ vars:
         actions: >-
           ${{ (verbs.map(v, v == 'Admin' ? ['Admin'] : (scope.size() > 0 ? scope.map(b, v + ':' + b) : [v])).flatten()
                + (g.?sts.orValue(false) == true ? ['Admin'] : [])).distinct() }}
-  # The keys ESO reads, by identity: identity 0 is the root, identity i+1 the
-  # grant i.
-  keyRefs:
-    - {id: 0, secret: "${{ rootSecret }}", accessKey: accessKey, secretKey: secretKey}
-    - $spread: >-
-        ${{ grants.transformList(i, g, {'id': i + 1, 'secret': g.credentialsSecret.name,
-              'accessKey': first([g.credentialsSecret.?accessKeyKey.orValue(''), 'accessKey']),
-              'secretKey': first([g.credentialsSecret.?secretKeyKey.orValue(''), 'secretKey'])}) }}
+        secret: ${{ g.credentialsSecret.name }}
+        accessKey: ${{ first([g.credentialsSecret.?accessKeyKey.orValue(''), 'accessKey']) }}
+        secretKey: ${{ first([g.credentialsSecret.?secretKeyKey.orValue(''), 'secretKey']) }}
+    - $for: c in claimed
+      $each:
+        name: ${{ c.id }}
+        actions: ["Read:${{ c.bucket }}", "List:${{ c.bucket }}", "Write:${{ c.bucket }}"]
+        secret: ${{ c.secret }}
+        accessKey: accessKey
+        secretKey: secretKey
+  # The identities of the S3 configuration, credentials left out: the
+  # principals' names and actions, identity i being principal i.
+  identities: >-
+    ${{ principals.map(p, {'name': p.name, 'actions': p.actions}) }}
+  # The keys ESO reads, by identity: id i is principal i (0 the root).
+  keyRefs: >-
+    ${{ principals.transformList(i, p, {'id': i, 'secret': p.secret, 'accessKey': p.accessKey,
+          'secretKey': p.secretKey}) }}
   # The ESO template of the S3 configuration: the identities with their keys,
   # JSON-escaped by ESO (toJson).
   s3Config: >-
@@ -125,73 +194,210 @@ vars:
   # data (no "{{" in it: see errors).
   iamTemplate: >-
     ${{ iamJson.replace('"@SIGNING_KEY@"', '{{ .signingKey | toJson }}') }}
-  # Buckets whose paths are seeded, paths without their leading and trailing
-  # "/" (Helm's trimAll "/").
-  seed:
-    - $for: b in buckets.filter(x, x.?paths.orValue([]).size() > 0)
-      $each:
-        name: ${{ b.name }}
-        paths:
-          - $for: p in b.paths
-            # The indexes of the characters that are not "/", first to last.
-            $each: >-
-              ${{ cel.bind(kept, lists.range(p.size()).filter(i, p.charAt(i) != '/'),
-                    kept.size() == 0 ? '' : p.substring(kept[0], kept[kept.size() - 1] + 1)) }}
+  # The buckets the provisioning Job creates, the values' then the claims'
+  # (the chart's bucket hook is off: s3.createBuckets protected), a line
+  # each of the file buckets of its ConfigMap: "<name> <anonymousRead>
+  # <objectLock> <versioning> <ttl>", "-" for no versioning, no TTL; read by
+  # its script, never part of its text.
+  bucketData: >-
+    ${{ (buckets.map(b, b.name + ' ' + string(b.?anonymousRead.orValue(false)) + ' '
+          + string(b.?objectLock.orValue(false)) + ' ' + b.?versioning.orValue('-') + ' '
+          + b.?ttl.orValue('-'))
+        + claimed.map(c, c.bucket + ' false false - -')).join('\n') + '\n' }}
+  # Buckets whose paths are seeded, the values' and the claims' (the paths
+  # of the s3 contract's pattern: segments joined by single slashes, none
+  # leading or trailing, config.schema.json and the claims' contract).
+  seed: >-
+    ${{ (buckets + claimed.map(c, {'name': c.bucket, 'paths': c.paths}))
+          .filter(x, x.?paths.orValue([]).size() > 0) }}
+  # The claims table of the usage text.
+  claimsText: |-
+    | Claim | Namespace | Bucket and identity | Paths | Credentials Secret |
+    |---|---|---|---|---|
+    ${{ claimed.transformList(i, c, '| `' + c.id + '` | `' + claims[i].namespace + '` | `' + c.bucket + '` | ' + (c.paths.size() > 0 ? c.paths.map(p, '`' + p + '`').join(', ') : 'none') + ' | `' + c.secret + '` |').join('\n') }}
+
+    Each claim's connection is published under its ID; its claimers reference it by the
+    claim, never by that name. A bucket is kept when its claim goes: delete it by hand.
   master: ${{ release.name }}-master.${{ release.namespace }}:9333
   filer: ${{ release.name }}-filer-client.${{ release.namespace }}:8888
-  # The provisioning script lines of the seeded buckets: wait for the bucket,
-  # then write an empty .keep in each path.
-  seedLines: >-
-    ${{ seed.map(b, ['wait_bucket ' + quote(b.name)] + b.paths.map(p, [
-          'echo ">> seeding ' + b.name + '/' + p + '/.keep"',
-          'weed filer.copy /tmp/marker/.keep ' + quote('http://' + filer + '/buckets/' + b.name + '/' + p + '/')]).flatten())
-        .flatten().join('\n') }}
+  # The sign-in proxy of the compiler (okdpSignInProxy): oauth2-proxy by
+  # digest, the platform's OIDC, the CA bundle of global.okdp.tls, the email
+  # of a user checked; its container, volumes and the cookie secret.
+  signIn: >-
+    ${{ !oidc ? {} : okdpSignInProxy({'host': consoleHost, 'upstream': 'http://' + filer + '/', 'name': proxySecret,
+          'groupsClaim': values.oidcRolesClaim,
+          'allowedGroups': allowedRoles.size() > 0 ? allowedRoles : platform.access.platformAdmins}) }}
+  # The data of the provisioning Job, a file of its ConfigMap: a line
+  # "<bucket> <path>" per path to seed, read by the script, never part of
+  # its text.
+  seedData: >-
+    ${{ seed.map(b, b.paths.map(p, b.name + ' ' + p)).flatten().join('\n') + '\n' }}
+  # The names of an S3 bucket (S3's rules: 3 to 63 lower-case letters,
+  # digits, dots and hyphens, a letter or a digit first and last, no "..",
+  # no IP address), as config.schema.json has them: the claims' buckets,
+  # named after their IDs, are checked here (errors).
+  bucketPattern: '^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$'
+
 
 errors:
-  # Required values (the former `required` calls of templates/auth.yaml; the
-  # schema also requires password and rootSecretKey).
-  - $if: ${{ str(values.?rootAccessKey.orValue('')) == '' }}
-    $value: "seaweedfs: rootAccessKey is required"
-  - $if: ${{ str(values.?rootSecretKey.orValue('')) == '' }}
-    $value: "seaweedfs: rootSecretKey is required (no default: the secret key of the store's root identity)"
-  - $if: ${{ str(values.?username.orValue('')) == '' }}
-    $value: "seaweedfs: username is required"
-  - $if: ${{ str(values.?password.orValue('')) == '' }}
-    $value: "seaweedfs: password is required (no default)"
+  - $if: ${{ oidc && platform.oidc.?issuerUri.orValue('') == '' }}
+    $value: "seaweedfs: global.okdp.oidc.issuerUri is required when OIDC is enabled: the filer UI signs users in through it. It is a platform value"
   # The IAM configuration is an ESO template: no "{{" in its data.
   - $if: ${{ iamJson.contains('{{') }}
     $value: 'seaweedfs: the IAM configuration contains "{{", which ESO would read as a template'
+  # The S3 configuration's template and ESO's key references pair, both
+  # being projected from principals: the template reads the two keys of
+  # identity i as .id<i>_access and .id<i>_secret, and every reference
+  # defines exactly those (ci case pairing: grants past nine, claims).
+  - $if: >-
+      ${{ identities.size() != keyRefs.size() || s3Config.split('{{ .id').size() != 2 * keyRefs.size() + 1
+            || keyRefs.exists(k, !s3Config.contains('{{ .id' + string(k.id) + '_access | toJson }}')
+                                 || !s3Config.contains('{{ .id' + string(k.id) + '_secret | toJson }}')) }}
+    $value: "seaweedfs: the identities of the S3 configuration and the keys ESO reads for them do not pair (a defect of the package)"
+  # A claim's bucket is named after its ID: a valid bucket name (the
+  # provisioning Job's data, which weed shell reads). The compiler's IDs are (DNS
+  # labels joined by dots, shortened to 63 characters with a hash): checked
+  # here all the same.
+  - $for: >-
+      c in claimed.filter(c, !c.bucket.matches(bucketPattern) || c.bucket.contains('..')
+        || c.bucket.matches('^[0-9]+[.][0-9]+[.][0-9]+[.][0-9]+$'))
+    $each: "seaweedfs: claim ${{ c.id }}: its ID is not a valid S3 bucket name (3 to 63 lower-case letters, digits, dots and hyphens)"
+  # A context's global may not replace the components' JWT keys either.
+  - $for: >-
+      k in ['WEED_JWT_SIGNING_KEY', 'WEED_JWT_FILER_SIGNING_KEY'].filter(k,
+        global.?seaweedfs.?extraEnvironmentVars[?k].hasValue() || global.?extraEnvironmentVars[?k].hasValue())
+    $each: "seaweedfs: global.seaweedfs.extraEnvironmentVars.${{ k }} is the package's: the JWT key generated for the components"
+  # A claim's bucket and identity are named after its ID: none of the values'.
+  - $for: c in claimed.filter(c, buckets.exists(b, b.name == c.bucket))
+    $each: "seaweedfs: bucket ${{ c.bucket }} is the bucket of a claim (its ID): rename the one of buckets"
+  - $for: c in claimed.filter(c, grants.exists(g, g.principal == c.id))
+    $each: "seaweedfs: principal ${{ c.id }} is the identity of a claim (its ID): rename the grant"
+  # The chart's ClusterRole and the pods' token are off (values.cel.yaml):
+  # a context's global, which Helm gives the chart over its computed one,
+  # may not turn them on again (global.seaweedfs.<key>, or global.<key>,
+  # which the chart still reads).
+  - $for: >-
+      k in ['createClusterRole', 'automountServiceAccountToken'].filter(k,
+        global.?seaweedfs[?k].hasValue() || global[?k].hasValue())
+    $each: "seaweedfs: global.seaweedfs.${{ k }} (global.${{ k }}) is the package's, off: no ClusterRole, which would let the pods write pods in every namespace, no token in the pods"
+
+# The OAuth client of the sign-in proxy of the filer UI, read from
+# platform.oidcClientSecret.
+oidcClients:
+  - $if: ${{ oidc }}
+    redirectUris: ['https://${{ consoleHost }}/oauth2/callback']
+    grantTypes: [authorization_code, refresh_token]
 
 # OKDP's own objects, rendered by the umbrella (okdp.objects.yaml).
 objects:
-  # Authentication of the store: the former auth-config module
-  # (oci://quay.io/okdp/charts/seaweedfs-auth-config 1.1.0), taken in here.
-  # That chart read the grants' Secrets with `lookup` to write the S3
-  # configuration and hashed the filer password with `htpasswd` (random
-  # salt): both differ between Helm and Argo CD. Now:
-  # - the S3 configuration Secret is written by ESO, which reads the root
-  #   and grant keys from their Secrets (kubernetes provider, same
-  #   namespace);
-  # - the filer basic auth file uses the nginx {PLAIN} scheme,
-  #   deterministic (the password is already in the values and in a Secret).
-  - apiVersion: v1
-    kind: Secret
+  # Authentication of the store: the S3 configuration Secret is written by
+  # ESO (never with `lookup`, which differs between Helm and Argo CD), which
+  # reads the root and grant
+  # keys from their Secrets (kubernetes provider, same namespace). The root
+  # identity's keys, unless rootCredentialsSecret names a Secret: generated
+  # once in the cluster (an ESO Password generator per key and the
+  # ExternalSecret writing <release>-root-credentials), never a value of
+  # the instance. Not kept on uninstall: no data depends on them, and the S3
+  # configuration follows new keys.
+  - $spread: >-
+      ${{ values.?rootCredentialsSecret.orValue('') != '' ? [] : okdpGeneratedSecret({'name': rootSecret,
+          'keys': [{'key': 'accessKey', 'length': 20, 'symbols': 0}, {'key': 'secretKey', 'length': 40, 'symbols': 0}]}) }}
+  # The sign-in proxy of the filer UI, with OIDC: the compiler's fragment
+  # (signIn: its container, volumes and cookie secret, generated once, 32
+  # bytes) on a hardened pod of its own, with its Service and Ingress.
+  - $spread: >-
+      ${{ !oidc ? [] : signIn.objects }}
+  - $for: "n in (oidc ? [proxyName] : [])"
+    $each:
+      - apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: ${{ n }}
+          labels: ${{ proxyLabels }}
+        spec:
+          replicas: 1
+          selector:
+            matchLabels: ${{ proxySelector }}
+          template:
+            metadata:
+              labels: ${{ proxyLabels }}
+            spec: >-
+              ${{ okdpPodSpec({'containers': [signIn.container], 'volumes': signIn.volumes}) }}
+      - apiVersion: v1
+        kind: Service
+        metadata:
+          name: ${{ n }}
+          labels: ${{ proxyLabels }}
+        spec:
+          selector: ${{ proxySelector }}
+          ports:
+            - {name: http, port: 4180, targetPort: proxy}
+      - apiVersion: networking.k8s.io/v1
+        kind: Ingress
+        metadata:
+          name: ${{ n }}
+          labels: ${{ proxyLabels }}
+          annotations:
+            $merge: ${{ platform.ingressAnnotations }}
+            # Uploads through the UI; the provider's tokens make the session
+            # cookies larger than the default buffer. Tunings of
+            # ingress-nginx, which another controller ignores
+            # (global.okdp.ingress.annotations).
+            nginx.ingress.kubernetes.io/proxy-body-size: "130m"
+            nginx.ingress.kubernetes.io/proxy-buffer-size: 16k
+        spec:
+          ingressClassName: ${{ global.okdp.ingress.className }}
+          rules:
+            - host: ${{ consoleHost }}
+              http:
+                paths:
+                  - path: /
+                    pathType: Prefix
+                    backend:
+                      service:
+                        name: ${{ n }}
+                        port:
+                          name: http
+          tls:
+            - hosts: ["${{ consoleHost }}"]
+              secretName: ${{ okdpFullname('filer-tls') }}
+  # The JWT keys of the components (values.cel.yaml): generated once by ESO
+  # (32 characters each), never a value of the instance nor a lookup of the
+  # chart's. The volume servers take only the writes the master signed, the
+  # filer only the HTTP writes signed (the S3 gateway's): a pod reaching
+  # them over HTTP writes nothing without the key. The keys do not cover
+  # gRPC nor the filer's reads over HTTP (its UI, behind the sign-in proxy,
+  # reads; it writes nothing): the NetworkPolicy below restricts both.
+  - $spread: >-
+      ${{ okdpGeneratedSecret({'name': jwtSecret,
+          'keys': [{'key': 'volumeWrite', 'length': 32, 'symbols': 0},
+                   {'key': 'filerWrite', 'length': 32, 'symbols': 0}]}) }}
+  # The store's own network: the master, the volume servers and the filer
+  # (their HTTP and gRPC ports: the filer's 8888 reads and writes every
+  # bucket, the master's 9333 assigns and looks up every file) are reached
+  # by the release's own pods only (the S3 gateway, the sign-in proxy, the
+  # hooks); the S3 gateway stays open to its consumers, each with its
+  # identity. Enforced where the cluster's network plugin enforces
+  # NetworkPolicies.
+  - apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
     metadata:
-      name: ${{ rootSecret }}
+      name: ${{ okdpFullname('internal') }}
       labels: ${{ labels }}
-    type: Opaque
-    stringData:
-      accessKey: ${{ str(values.rootAccessKey) }}
-      secretKey: ${{ str(values.rootSecretKey) }}
-  # nginx.ingress.kubernetes.io/auth-secret of the filer ingress.
-  - apiVersion: v1
-    kind: Secret
-    metadata:
-      name: ${{ filerAuthSecret }}
-      labels: ${{ okdpLabels('filer') }}
-    type: Opaque
-    stringData:
-      auth: ${{ str(values.username) }}:{PLAIN}${{ str(values.password) }}
+    spec:
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/instance: ${{ release.name }}
+        matchExpressions:
+          - key: app.kubernetes.io/component
+            operator: In
+            values: [master, volume, filer]
+      policyTypes: [Ingress]
+      ingress:
+        - from:
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/instance: ${{ release.name }}
   # IAM / STS configuration of the S3 gateway (mounted at /etc/seaweed/iam).
   # SeaweedFS serves no STS without a signing key: one is generated once by
   # ESO (frozen, 48 random characters, base64 as iam.json expects) and ESO
@@ -234,7 +440,8 @@ objects:
     rules:
       - apiGroups: [""]
         resources: ["secrets"]
-        resourceNames: ${{ ([rootSecret, stsKeySecret] + grants.map(g, g.credentialsSecret.name)).distinct() }}
+        resourceNames: >-
+          ${{ ([rootSecret, stsKeySecret] + keyRefs.map(k, k.secret)).distinct() }}
         verbs: ["get"]
       # ESO's kubernetes provider checks its access with a SelfSubjectRulesReview.
       - apiGroups: ["authorization.k8s.io"]
@@ -295,15 +502,22 @@ objects:
               remoteRef: {key: "${{ k.secret }}", property: "${{ k.accessKey }}"}
             - secretKey: id${{ k.id }}_secret
               remoteRef: {key: "${{ k.secret }}", property: "${{ k.secretKey }}"}
-  # Seeds buckets[].paths: an empty `.keep` object in each prefix, for
-  # consumers that need the prefix to exist (Spark's FsHistoryProvider). A
-  # post-install/post-upgrade hook Job, idempotent, after the upstream
-  # bucket hook (weight -5) created the buckets. It runs the SeaweedFS image
-  # of the store: `weed shell` waits for each bucket and `weed filer.copy`
-  # writes the marker through the filer (buckets are /buckets/<name>/), so
-  # no S3 identity is involved. Replaces the former seaweedfs-provisioning
-  # chart and its MinIO client.
-  - $for: "x in (seed.size() > 0 ? [okdpFullname('provisioning')] : [])"
+  # Creates the buckets, the values' and the claims' (bucketData), and seeds
+  # buckets[].paths and the paths the claims request (seedData): an empty
+  # `.keep` object in each prefix, for consumers that need the prefix to
+  # exist (Spark's FsHistoryProvider). A post-install/post-upgrade hook Job,
+  # idempotent, in place of the chart's bucket hook (s3.createBuckets
+  # protected: a pod without securityContext, the default ServiceAccount's
+  # token and the S3 configuration Secret mounted). It runs the SeaweedFS
+  # image of the store: `weed shell` creates each bucket and sets its
+  # options, as the chart's hook did, and `weed filer.copy` writes the
+  # marker through the filer (buckets are /buckets/<name>/), so no S3
+  # identity is involved. The buckets and paths are data, the files buckets
+  # and seed of its ConfigMap, which the script reads into quoted variables
+  # and checks against their patterns again: no shell, no weed shell input
+  # is built from a value. It runs as a user, without privilege, capability
+  # or ServiceAccount token, on a read-only root.
+  - $for: "x in (buckets.size() + claimed.size() > 0 ? [okdpFullname('provisioning')] : [])"
     $vars:
       provisioningLabels: ${{ okdpLabels('provisioning') }}
     $each:
@@ -313,72 +527,117 @@ objects:
           name: ${{ x }}
           labels: ${{ provisioningLabels }}
         data:
+          buckets: ${{ bucketData }}
+          seed: ${{ seedData }}
           provision.sh: |
             #!/bin/sh
+            # Creates the buckets of /scripts/buckets, a line "<name>
+            # <anonymousRead> <objectLock> <versioning> <ttl>" each ("-": none),
+            # then seeds the paths of /scripts/seed, a line "<bucket> <path>"
+            # each, an empty .keep in the path through the filer (okdp.yaml,
+            # bucketData and seedData). Each field is checked against its
+            # pattern before it reaches weed shell's input. MASTER and FILER:
+            # the store's addresses.
             set -eu
             deadline=$(( $(date +%s) + 300 ))
-            shell() { echo "$1" | weed shell -master=${{ master }} -filer=${{ filer }}; }
-            bucket_exists() { shell s3.bucket.list | awk '{print $1}' | grep -Fxq "$1"; }
-            # The store may still be converging when the hook starts: wait, do not fail.
-            wait_bucket() {
-              echo ">> waiting for bucket $1"
-              until bucket_exists "$1" 2>/dev/null; do
+            # The store may still be converging when the hook starts: wait, do
+            # not fail.
+            wait_up() {
+              echo ">> waiting for $1"
+              until curl -fsS -o /dev/null --max-time 5 "$1" 2>/dev/null; do
                 if [ "$(date +%s)" -ge "${deadline}" ]; then
-                  echo "!! timed out waiting for bucket $1"
+                  echo "!! timed out waiting for $1"
                   exit 1
                 fi
                 sleep 3
               done
             }
+            # run <command>: a command of weed shell, which exits 0 on an
+            # error: its "error:" lines fail.
+            run() {
+              out=$(printf '%s\n' "$1" | weed shell -master="${MASTER}" -filer="${FILER}" 2>&1) || {
+                printf '%s\n' "${out}"
+                return 1
+              }
+              if printf '%s\n' "${out}" | grep -q '^error:'; then
+                printf '%s\n' "${out}"
+                return 1
+              fi
+            }
+            bucket_exists() {
+              printf '%s\n' s3.bucket.list | weed shell -master="${MASTER}" -filer="${FILER}" \
+                | awk '{print $1}' | grep -Fxq -- "$1"
+            }
+            # valid <what> <value> <extended regular expression>
+            valid() {
+              if ! printf '%s\n' "$2" | grep -Eqx -- "$3"; then
+                echo "!! invalid $1: $2"
+                exit 1
+              fi
+            }
+            wait_up "http://${MASTER}/cluster/status"
+            wait_up "http://${FILER}/"
+            while read -r name anonymous lock versioning ttl; do
+              [ -n "${name}" ] || continue
+              valid bucket "${name}" '[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]'
+              case "${name}" in *..*) echo "!! invalid bucket: ${name}"; exit 1 ;; esac
+              valid anonymousRead "${anonymous}" 'true|false'
+              valid objectLock "${lock}" 'true|false'
+              valid versioning "${versioning}" 'Enabled|Suspended|-'
+              valid ttl "${ttl}" '[0-9]+[mhdwMy]|-'
+              if bucket_exists "${name}"; then
+                echo ">> bucket ${name} exists"
+                if [ "${lock}" = true ]; then run "s3.bucket.lock -name ${name} -enable"; fi
+              elif [ "${lock}" = true ]; then
+                echo ">> creating bucket ${name}, Object Lock on"
+                run "s3.bucket.create -name ${name} -withLock"
+              else
+                echo ">> creating bucket ${name}"
+                run "s3.bucket.create -name ${name}"
+              fi
+              if [ "${versioning}" != - ]; then run "s3.bucket.versioning -name ${name} -status ${versioning}"; fi
+              if [ "${ttl}" != - ]; then run "fs.configure -locationPrefix=/buckets/${name}/ -ttl=${ttl} -apply"; fi
+              if [ "${anonymous}" = true ]; then run "s3.configure -user anonymous -buckets ${name} -actions Read -apply"; fi
+            done < /scripts/buckets
             mkdir -p /tmp/marker && : > /tmp/marker/.keep
-            ${{ seedLines }}
+            while read -r bucket path; do
+              [ -n "${bucket}" ] && [ -n "${path}" ] || continue
+              valid bucket "${bucket}" '[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]'
+              valid path "${path}" '[A-Za-z0-9_][A-Za-z0-9._-]*(/[A-Za-z0-9_][A-Za-z0-9._-]*)*'
+              echo ">> seeding ${bucket}/${path}/.keep"
+              weed filer.copy /tmp/marker/.keep "http://${FILER}/buckets/${bucket}/${path}/"
+            done < /scripts/seed
             echo ">> provisioning complete"
-      - apiVersion: batch/v1
-        kind: Job
-        metadata:
-          name: ${{ x }}
-          labels: ${{ provisioningLabels }}
-          annotations:
-            # Recreated on every install and upgrade (a Job is immutable): an
-            # added path is always picked up. Writing an existing marker again
-            # changes nothing.
-            helm.sh/hook: post-install,post-upgrade
-            helm.sh/hook-delete-policy: before-hook-creation
-        spec:
-          backoffLimit: 20
-          template:
-            metadata:
-              labels: ${{ provisioningLabels }}
-            spec:
-              restartPolicy: OnFailure
-              containers:
-                - name: provision
-                  image: chrislusf/seaweedfs:${{ imageTag }}
-                  imagePullPolicy: IfNotPresent
-                  command: ["/bin/sh", "/scripts/provision.sh"]
-                  securityContext:
-                    allowPrivilegeEscalation: false
-                  volumeMounts:
-                    - name: scripts
-                      mountPath: /scripts
-              volumes:
-                - name: scripts
-                  configMap:
-                    name: ${{ x }}
+      # Recreated on every install and upgrade (a Job is immutable): an added
+      # path is always picked up. Writing an existing marker again changes
+      # nothing. The compiler's hardened Job (okdpJob): non-root, no
+      # capability, no token, a read-only root, the scripts and a /tmp.
+      - $spread: >-
+          ${{ okdpJob({'name': x, 'component': 'provisioning', 'backoffLimit': 20,
+                'hook': {'helm': 'post-install,post-upgrade'},
+                'pod': {'restartPolicy': 'OnFailure', 'runAsUser': 1000, 'runAsGroup': 1000,
+                  'containers': [{'name': 'provision', 'image': 'chrislusf/seaweedfs:' + imageTag,
+                    'imagePullPolicy': 'IfNotPresent', 'command': ['/bin/sh', '/scripts/provision.sh'],
+                    'env': [{'name': 'MASTER', 'value': master}, {'name': 'FILER', 'value': filer},
+                            {'name': 'HOME', 'value': '/tmp'}],
+                    'volumeMounts': [{'name': 'scripts', 'mountPath': '/scripts', 'readOnly': true},
+                                     {'name': 'tmp', 'mountPath': '/tmp'}]}],
+                  'volumes': [{'name': 'scripts', 'configMap': {'name': x}}, {'name': 'tmp', 'emptyDir': {}}]}}) }}
 
-# okdp.info.yaml, listed by the console: the filer UI.
+# okdp.info.yaml, listed by the console: the filer UI, with OIDC.
 instance:
-  url: https://${{ consoleHost }}
+  url: >-
+    ${{ oidc ? 'https://' + consoleHost : '' }}
   usage: |
     SeaweedFS is a simple and highly scalable distributed file system.
-    Access the console at https://${{ consoleHost }} (user `${{ values.username }}`).
+    ${{ oidc ? 'Access the console at https://' + consoleHost + ' (platform sign-in).' : 'The console (filer UI) is not exposed: it signs users in through the platform\'s OIDC, which is disabled.' }}
     S3 API: https://${{ apiHost }} (in-cluster `${{ internalUrl }}`), path-style, region us-east-1.
 
-    An instance of this namespace references this store by the release name; consumers
-    in other namespaces declare it in a connection file, with their own identity (a grant
-    of this store) as secretRef.
+    An instance of this namespace references this store by its instance's name; consumers
+    in other namespaces claim a bucket, or declare it as a connection (connections), with
+    their own identity (a grant of this store) as secretRef.${{ claimed.size() > 0 ? '\n\n' + claimsText : '' }}
 
-# One s3 output named after the release. No credentials by default: each
+# One s3 output named after the instance. No credentials by default: each
 # consumer brings its own identity (grants); a secretRef only when one is given,
 # here outputSecretRef (a Secret consumers can use), when set.
 provides:
@@ -392,3 +651,22 @@ provides:
     secretRef:
       $if: ${{ values.?outputSecretRef.orValue('') != '' }}
       name: ${{ values.outputSecretRef }}
+  # One per claim bound to the instance, named after its ID: the store's
+  # endpoints, the claim's bucket and the paths seeded in it, the keys of
+  # its identity in a Secret generated once by ESO (<id>-s3-credentials,
+  # labelled okdp.io/credentials-s3), which the S3 configuration reads.
+  - $for: c in claimed
+    $each:
+      contract: s3
+      name: ${{ c.id }}
+      values:
+        apiUrl: https://${{ apiHost }}
+        internalUrl: ${{ internalUrl }}
+        bucket: ${{ c.bucket }}
+        paths: ${{ c.paths }}
+        region: us-east-1
+        pathStyle: true
+      secret:
+        generate:
+          - {key: accessKey, length: 20, symbols: 0}
+          - {key: secretKey, length: 40, symbols: 0}

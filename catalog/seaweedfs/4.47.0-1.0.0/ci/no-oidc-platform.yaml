@@ -1,0 +1,5 @@
+# OIDC off (level 0, over platform.yaml): the filer UI is not exposed.
+global:
+  okdp:
+    oidc:
+      enabled: false

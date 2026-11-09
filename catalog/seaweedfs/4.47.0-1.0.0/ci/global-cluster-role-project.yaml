@@ -1,0 +1,5 @@
+# The project demo, its global turning the chart's ClusterRole on again: a
+# key of global the chart reads, which Helm gives it over the computed one.
+global:
+  seaweedfs:
+    createClusterRole: true

@@ -1,6 +1,14 @@
-# The platform values of every case (--context, level 0).
+# The platform values of every case (level 0): the sandbox's, OIDC with
+# existing OAuth clients (the sign-in proxy of the filer UI).
 global:
   okdp:
     ingress: {suffix: okdp.sandbox, className: nginx}
-    certificateIssuers: {selfSigned: {name: default-issuer}}
+    tls: {clusterIssuer: default-issuer, caBundleSecret: certs-bundle}
     storageClass: {data: standard, workspace: standard}
+    access:
+      admins: [platform_admin]
+    oidc:
+      enabled: true
+      issuerUri: https://keycloak.okdp.sandbox/realms/master
+      scope: openid profile email groups
+      clientProvisioning: existing
