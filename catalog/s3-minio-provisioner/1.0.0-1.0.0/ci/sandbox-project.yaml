@@ -1,0 +1,19 @@
+# The sandbox's layout: RustFS of the bootstrap, a connection of the provisioner's
+# project, its credentials the identity okdp-provisioner the RustFS release creates
+# (Secret rustfs/rustfs-provisioner), which OpenBao's init writes under the key
+# <namespace>/s3-provisioner, read by this namespace only (here demo, the cases'
+# namespace); one named claim, as Spark's event logs.
+connections:
+  rustfs:
+    contract: s3
+    description: RustFS of the bootstrap, its provisioning identity
+    apiUrl: https://s3.okdp.sandbox
+    internalUrl: http://rustfs-svc.rustfs.svc.cluster.local:9000
+    region: us-east-1
+    pathStyle: true
+    secretRef:
+      remoteKey: demo/s3-provisioner
+claims:
+  spark-events:
+    contract: s3
+    request: {paths: [event-logs]}

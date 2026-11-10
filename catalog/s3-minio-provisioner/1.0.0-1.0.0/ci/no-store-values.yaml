@@ -1,0 +1,3 @@
+# error: s3-minio-provisioner: store is required
+# A claim is bound to the instance (ci/no-store-project.yaml), which names no store.
+store: ""

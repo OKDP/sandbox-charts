@@ -1,0 +1,11 @@
+# A store reached through its https endpoint only (no internalUrl), its certificate
+# issued by the platform's CA, virtual-host addressing; one named claim.
+connections:
+  store:
+    contract: s3
+    apiUrl: https://minio.example.internal
+    pathStyle: false
+    secretRef: {name: s3-provisioner-credentials}
+claims:
+  data:
+    contract: s3

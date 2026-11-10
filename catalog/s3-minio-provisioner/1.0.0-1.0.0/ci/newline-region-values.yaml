@@ -1,0 +1,3 @@
+# error: - at '/region': 'us-east-1\nx.region=attacker' does not match pattern '^[^\\r\\n]*$'
+# The store's region is two lines (ci/newline-region-project.yaml).
+store: store

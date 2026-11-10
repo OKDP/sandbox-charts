@@ -1,0 +1,5 @@
+# The platform's CA bundle, certs-bundle in every namespace: the Job trusts it when
+# it calls an https endpoint.
+global:
+  okdp:
+    tls: {clusterIssuer: default-issuer, caBundleSecret: certs-bundle}

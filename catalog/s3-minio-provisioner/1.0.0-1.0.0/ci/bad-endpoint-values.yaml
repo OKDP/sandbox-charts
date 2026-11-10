@@ -1,0 +1,3 @@
+# error: s3-minio-provisioner: store: its endpoint "s3.example.com" (internalUrl, else apiUrl) is not an http:// or https:// URL
+# The store's apiUrl has no scheme (ci/bad-endpoint-project.yaml).
+store: store

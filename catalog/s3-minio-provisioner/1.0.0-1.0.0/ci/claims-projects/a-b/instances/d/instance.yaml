@@ -1,0 +1,6 @@
+# The first of two claimers of s3 connections whose claim IDs collide under a
+# lossy mapping of an ID to a name (the dots and the dashes both "_", say):
+# a-b.d.bucket, against a.b-d.bucket (ci/claims-projects/a). The provider keeps
+# them two, a bucket and an identity each.
+service: s3-claimer
+version: 1.0.0

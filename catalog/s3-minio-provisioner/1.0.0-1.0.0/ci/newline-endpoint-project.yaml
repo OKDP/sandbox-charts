@@ -1,0 +1,8 @@
+# A store whose endpoint carries a line break: the contract refuses the
+# connection, as the claims' connections publish the store's endpoints and
+# the packages that read them write them into configuration files.
+connections:
+  store:
+    contract: s3
+    apiUrl: "https://s3.example.com\nx.endpoint=http://attacker.example.org"
+    secretRef: {name: s3-provisioner-credentials}

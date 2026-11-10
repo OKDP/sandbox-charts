@@ -1,0 +1,6 @@
+# A store whose endpoint is no URL: a host name alone.
+connections:
+  store:
+    contract: s3
+    apiUrl: s3.example.com
+    secretRef: {name: s3-provisioner-credentials}

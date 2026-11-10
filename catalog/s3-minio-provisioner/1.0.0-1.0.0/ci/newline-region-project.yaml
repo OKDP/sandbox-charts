@@ -1,0 +1,8 @@
+# A store whose region carries a line break, the same refusal on a name
+# rather than a URL.
+connections:
+  store:
+    contract: s3
+    apiUrl: https://s3.example.com
+    region: "us-east-1\nx.region=attacker"
+    secretRef: {name: s3-provisioner-credentials}

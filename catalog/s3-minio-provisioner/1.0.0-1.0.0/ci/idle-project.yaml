@@ -1,0 +1,6 @@
+# The store, no claim.
+connections:
+  store:
+    contract: s3
+    apiUrl: https://s3.example.com
+    secretRef: {name: s3-provisioner-credentials}

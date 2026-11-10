@@ -1,0 +1,4 @@
+# The provider of the claims of the project demo (ci/claims-project.yaml), on the
+# store the project declares: a bucket, a policy and a user per claim, the Job's
+# endpoint the store's internalUrl (http: no CA mounted).
+store: store

@@ -1,0 +1,16 @@
+apiVersion: v2
+name: s3-minio-provisioner
+description: >-
+  Provisions s3 connections on an S3 store OKDP neither deploys nor manages, through
+  MinIO's admin API (MinIO, RustFS and the stores that speak it): for each claim, a
+  bucket, an identity limited to it, its keys generated in the cluster, and the
+  prefixes it requests. Deploys no store: the store is an s3 connection, its
+  credentials an identity allowed to create buckets, users and policies.
+type: application
+# <upstream>-<okdp semver>: catalog/s3-minio-provisioner/<version>/, a new directory per version.
+version: 1.0.0-1.0.0
+appVersion: "1.0.0"
+home: https://okdp.io
+sources:
+  - https://github.com/OKDP/sandbox-charts
+# No dependency: the provisioning Job is OKDP's own object (okdp.yaml).

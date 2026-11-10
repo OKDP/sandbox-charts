@@ -1,0 +1,33 @@
+# The project demo: the store, a connection of the project (an S3 store OKDP does
+# not deploy, its in-cluster endpoint over http), its credentials the identity the
+# provisioner creates buckets, users and policies with; a class of its own, events,
+# buckets with the prefix of Spark's event logs seeded (request: a key the class
+# fixes); and its named claims, each bound to demo-s3-minio-provisioner and given to
+# it whether an instance references it or not:
+# - lake, of the default class (standard), with two prefixes;
+# - spark-events, of the class events;
+# - scratch, of the provider it names, whatever the classes.
+connections:
+  store:
+    contract: s3
+    description: The company's S3 store, MinIO's admin API
+    apiUrl: https://s3.example.com
+    internalUrl: http://minio.storage.svc.cluster.local:9000
+    region: eu-west-1
+    secretRef: {name: s3-provisioner-credentials}
+global:
+  okdp:
+    provisioning:
+      s3:
+        classes:
+          events: {provider: s3-minio-provisioner, request: {paths: [spark-events]}}
+claims:
+  lake:
+    contract: s3
+    request: {paths: [raw, curated/v1]}
+  spark-events:
+    contract: s3
+    class: events
+  scratch:
+    contract: s3
+    provider: s3-minio-provisioner

@@ -1,0 +1,4 @@
+# The claims of the project demo (ci/claims-project.yaml) with adopt set: the Job
+# adopts a bucket of a claim's name that carries no tag, and the configuration says so.
+store: store
+adopt: true

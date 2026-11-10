@@ -1,0 +1,3 @@
+# The sandbox's instance (sandbox-project.yaml): RustFS through MinIO's admin API,
+# the provisioning identity read from OpenBao into <release>.rustfs-credentials.
+store: rustfs

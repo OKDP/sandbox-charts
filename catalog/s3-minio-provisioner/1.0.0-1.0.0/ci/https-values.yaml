@@ -1,0 +1,3 @@
+# The Job calls https://minio.example.internal, the platform's CA bundle mounted
+# (NODE_EXTRA_CA_CERTS); the claim's connection has no internalUrl.
+store: store

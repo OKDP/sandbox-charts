@@ -1,0 +1,25 @@
+# The sandbox's platform values (okdp-sandbox gitops/platform.yaml): its secret store,
+# OpenBao, a SecretStore okdp-secrets of each namespace; the CA bundle of every
+# namespace, certs-bundle (the Job's S3 endpoint is http here: not mounted).
+global:
+  okdp:
+    tls: {clusterIssuer: default-issuer, caBundleSecret: certs-bundle}
+    secrets:
+      store: okdp-secrets
+      serviceAccount: okdp-secrets
+      provider:
+        vault:
+          server: https://openbao.openbao.svc.cluster.local:8200
+          path: okdp
+          version: v2
+          caProvider:
+            type: Secret
+            name: certs-bundle
+            key: ca.crt
+          auth:
+            kubernetes:
+              mountPath: kubernetes
+              role: okdp
+              serviceAccountRef:
+                name: okdp-secrets
+                audiences: [openbao]

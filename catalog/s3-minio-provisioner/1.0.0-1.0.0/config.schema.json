@@ -1,0 +1,45 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "s3-minio-provisioner",
+  "type": "object",
+  "properties": {
+    "global": {
+      "type": "object",
+      "description": "Platform values (global.okdp): the context's layers, the platform's (platform.yaml) then its project's (project.yaml), never an instance's."
+    },
+    "store": {
+      "type": "string",
+      "default": "",
+      "title": "S3 store",
+      "description": "The S3 store the claims are provisioned on, which speaks MinIO's admin API (MinIO, RustFS): the name of an s3 connection (of the project, in practice: its credentials kept in the platform's secret store under a key of this namespace, secretRef: {remoteKey: <namespace>/<key>}), or of an output of another instance of the namespace. Its endpoint is the Job's, internalUrl else apiUrl; its credentials Secret (secretRef, keys accessKey and secretKey) is the identity the Job provisions with, one allowed to create buckets (s3:CreateBucket), users (admin:CreateUser) and policies (admin:CreatePolicy, admin:AttachUserOrGroupPolicy); the claims' connections publish its endpoints, region and addressing. Required.",
+      "x-okdp-connection-ref": {
+        "contract": "s3",
+        "require": {
+          "required": ["secretRef"]
+        }
+      },
+      "x-ui-group": "Store",
+      "x-ui-order": 1
+    },
+    "image": {
+      "type": "string",
+      "default": "docker.io/library/node:24.22.2-alpine3.24@sha256:8a32c8cf649a49915a66e81e7a609223c708d0adabf288ee3f4077d765542f85",
+      "title": "Job image",
+      "description": "Image of the provisioning Job: Node.js 22 or later, its standard library only (fetch, crypto), run as the user 1000 with a read-only root file system. By digest (repository[:tag]@sha256:...), required: the Job holds the provisioning identity of the store. Pin a mirror of the platform's registries here.",
+      "pattern": "^[^\\s@]+@sha256:[0-9a-f]{64}$",
+      "x-ui-group": "Store",
+      "x-ui-order": 2,
+      "x-ui-advanced": true
+    },
+    "adopt": {
+      "type": "boolean",
+      "default": false,
+      "title": "Adopt existing buckets",
+      "description": "The Job creates a claim's bucket and tags it okdp.io/claim=<claim ID>; a bucket of that name that exists without the tag is not the Job's and the claim is refused (no policy, no user, the Job fails). Set to true once to adopt such buckets (they are tagged then), for the buckets an earlier version of this package created, or one an operator made for the claim; a bucket tagged for another claim is never adopted. Set it back to false afterwards.",
+      "x-ui-group": "Store",
+      "x-ui-order": 3,
+      "x-ui-advanced": true
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,5 @@
+# error: at '/image': 'docker.io/library/node:24.22.2-alpine3.24' does not match pattern
+# The Job's image by a tag alone: the schema asks for a digest (the Job holds the
+# store's provisioning identity).
+store: store
+image: docker.io/library/node:24.22.2-alpine3.24

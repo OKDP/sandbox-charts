@@ -1,0 +1,10 @@
+# The platform values of every case: the instance under test, demo-s3-minio-provisioner,
+# the provider of the default class of s3 connections, standard, over the repository's
+# ci/platform.yaml (its secret store, a ClusterSecretStore).
+global:
+  okdp:
+    provisioning:
+      s3:
+        default: standard
+        classes:
+          standard: {provider: demo/s3-minio-provisioner}

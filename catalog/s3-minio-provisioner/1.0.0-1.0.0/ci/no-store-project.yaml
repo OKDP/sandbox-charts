@@ -1,0 +1,4 @@
+# A named claim bound to the instance under test, which names no store.
+claims:
+  lake:
+    contract: s3
