@@ -1,0 +1,27 @@
+# The cluster issuers: a dependency of the platform, installed with helm after
+# cert-manager and trust-manager (bootstrap/README.md), from the chart cert-issuers
+# 0.2.0 of oci://quay.io/okdp/charts, in cert-manager's namespace (trust-manager reads
+# the CA Secret there):
+#   helm upgrade --install cert-issuers oci://quay.io/okdp/charts/cert-issuers@sha256:b76c3386a1aa7d683b3db7c13a8e3a749073c4c965a4ae6a7dbbebdd46dabfa6 \
+#     -n cert-manager --wait -f bootstrap/cert-issuers/values.yaml
+# default-issuer: a self-signed CA, minted in the cluster (Secret
+# cert-manager/default-issuer, key ca.crt: import it into your trust store, README step
+# 7), the issuer of every certificate (global.okdp.tls.clusterIssuer). Its Bundle is
+# bootstrap/trust-manager/bundle.yaml, not the chart's. No replication (the chart's
+# default: annotations for a replicator, which copies the CA Secret to every
+# namespace): the bootstrap runs no replicator, trust-manager writes the CA bundle,
+# the CA's key stays in cert-manager.
+bundle:
+  enabled: false
+replication:
+  enabled: false
+caClusterIssuers: []
+selfSignedClusterIssuers:
+  - name: default-issuer
+    certificate:
+      commonName: OKDP Sandbox Self-Signed CA
+      organization: OKDP
+      country: FR
+      validity: 8760h
+      algorithm: ECDSA
+      size: 256

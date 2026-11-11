@@ -1,0 +1,31 @@
+#
+# Copyright 2026 The OKDP Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+#  Unless required by applicable law or agreed to in writing, software
+#  distributed under the License is distributed on an "AS IS" BASIS,
+#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#  See the License for the specific language governing permissions and
+#  limitations under the License.
+#
+
+# approver-policy: a dependency of the platform, installed with helm after cert-manager
+# (bootstrap/README.md), from the upstream chart cert-manager-approver-policy v0.29.0 of
+# https://charts.jetstack.io:
+#   helm upgrade --install approver-policy cert-manager-approver-policy --repo https://charts.jetstack.io \
+#     --version v0.29.0 -n cert-manager --create-namespace --wait -f bootstrap/approver-policy/values.yaml
+# The only approver of the CertificateRequests: cert-manager's own (it approves every
+# request) is off (bootstrap/cert-manager/values.yaml), so a certificate is signed only
+# if a CertificateRequestPolicy (approver-policy/policies.yaml) allows its names:
+# default-issuer signs the requesting namespace's hosts and the platform's own
+# namespaces' names, nothing else (PKG-18's second line, with
+# protection/ingress-hosts.yaml). The webhook's certificate is the pod's own (no
+# CertificateRequest: no deadlock with the policies it validates).
+# The image by digest (scripts/bump-bootstrap.sh): the chart renders repository@digest.
+image:
+  digest: sha256:b516dba9e41d8e29957fa8f16479fb109741f7d3f418ef6aa2b47221dfdd5ef3

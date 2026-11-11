@@ -1,0 +1,155 @@
+#
+# Copyright 2026 The OKDP Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+#  Unless required by applicable law or agreed to in writing, software
+#  distributed under the License is distributed on an "AS IS" BASIS,
+#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#  See the License for the specific language governing permissions and
+#  limitations under the License.
+#
+
+# The CertificateRequestPolicies of the platform (bootstrap/approver-policy/values.yaml),
+# applied right after approver-policy, before any certificate is requested:
+#   kubectl apply -f bootstrap/approver-policy/policies.yaml
+# A CertificateRequest is approved if at least one policy that applies to it allows it
+# (issuer, namespace) and the requester may use that policy; one no policy allows is
+# denied, and one no policy applies to waits (a ClusterIssuer of your own needs a policy).
+#   okdp-ca         the CA of default-issuer (bootstrap/cert-issuers): cert-manager's
+#                   namespace, the self-signed issuer, one subject
+#   okdp-platform   default-issuer, the namespaces of the platform's own, those labelled
+#                   okdp.io/platform=true by bootstrap/namespaces.yaml (the bootstrap's,
+#                   the engines', global.okdp.policy.privileged of the platform values;
+#                   not the cluster's, "system"): their names (keycloak.okdp.sandbox,
+#                   openbao.openbao.svc, localhost...)
+#   okdp-projects   default-issuer, any namespace: dnsNames and commonName exactly
+#                   <label>.<namespace>.okdp.sandbox (the suffix of the platform values,
+#                   as protection/ingress-hosts.yaml's: one DNS label, the namespace,
+#                   the suffix), or listed for the namespace in the rules below; no IP
+#                   address, no CA
+#   okdp-issuers    the issuers of a namespace (kind Issuer, any name): their CA is not
+#                   the platform's, nothing they sign is trusted by it
+# Only cert-manager's controller (the ServiceAccount cert-manager/cert-manager, the
+# requester of every Certificate) may use them.
+apiVersion: policy.cert-manager.io/v1alpha1
+kind: CertificateRequestPolicy
+metadata:
+  name: okdp-ca
+spec:
+  allowed:
+    isCA: true
+    commonName:
+      value: "OKDP Sandbox Self-Signed CA"
+    subject:
+      countries:
+        values: ["FR"]
+      organizationalUnits:
+        values: ["OKDP"]
+    usages: ["digital signature", "key encipherment", "cert sign", "crl sign"]
+  selector:
+    issuerRef:
+      name: default-issuer-self
+      kind: ClusterIssuer
+      group: cert-manager.io
+    namespace:
+      matchNames: [cert-manager]
+---
+apiVersion: policy.cert-manager.io/v1alpha1
+kind: CertificateRequestPolicy
+metadata:
+  name: okdp-platform
+spec:
+  allowed:
+    commonName:
+      value: "*"
+    dnsNames:
+      values: ["*"]
+    ipAddresses:
+      values: ["*"]
+    usages: ["digital signature", "key encipherment", "server auth", "client auth"]
+  selector:
+    issuerRef:
+      name: default-issuer
+      kind: ClusterIssuer
+      group: cert-manager.io
+    namespace:
+      matchLabels:
+        okdp.io/platform: "true"
+---
+apiVersion: policy.cert-manager.io/v1alpha1
+kind: CertificateRequestPolicy
+metadata:
+  name: okdp-projects
+spec:
+  allowed:
+    # One DNS label, the requesting namespace, the platform's suffix (change okdp.sandbox
+    # with the domain). A host the platform lists for a project
+    # (global.okdp.policy.ingressHosts) is added to both rules as a clause, for that
+    # project only: ... || (cr.namespace == 'demo' && self == 'grafana.okdp.sandbox')
+    commonName:
+      validations:
+        - rule: >-
+            self.matches('(?i)^[a-z0-9]([-a-z0-9]*[a-z0-9])?\\.' + cr.namespace + '\\.okdp\\.sandbox$')
+          message: the commonName of a project is <label>.<namespace>.okdp.sandbox
+    dnsNames:
+      validations:
+        - rule: >-
+            self.matches('(?i)^[a-z0-9]([-a-z0-9]*[a-z0-9])?\\.' + cr.namespace + '\\.okdp\\.sandbox$')
+          message: the dnsNames of a project are <label>.<namespace>.okdp.sandbox
+    usages: ["digital signature", "key encipherment", "server auth", "client auth"]
+  selector:
+    issuerRef:
+      name: default-issuer
+      kind: ClusterIssuer
+      group: cert-manager.io
+---
+apiVersion: policy.cert-manager.io/v1alpha1
+kind: CertificateRequestPolicy
+metadata:
+  name: okdp-issuers
+spec:
+  allowed:
+    isCA: true
+    commonName:
+      value: "*"
+    dnsNames:
+      values: ["*"]
+    ipAddresses:
+      values: ["*"]
+    uris:
+      values: ["*"]
+    emailAddresses:
+      values: ["*"]
+    usages: ["digital signature", "key encipherment", "cert sign", "crl sign", "server auth", "client auth"]
+  selector:
+    issuerRef:
+      kind: Issuer
+      group: cert-manager.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: okdp-certificaterequestpolicy-use
+rules:
+  - apiGroups: [policy.cert-manager.io]
+    resources: [certificaterequestpolicies]
+    verbs: [use]
+    resourceNames: [okdp-ca, okdp-platform, okdp-projects, okdp-issuers]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: okdp-certificaterequestpolicy-use
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: okdp-certificaterequestpolicy-use
+subjects:
+  - kind: ServiceAccount
+    name: cert-manager
+    namespace: cert-manager

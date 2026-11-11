@@ -1,0 +1,133 @@
+#
+# Copyright 2026 The OKDP Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+#  Unless required by applicable law or agreed to in writing, software
+#  distributed under the License is distributed on an "AS IS" BASIS,
+#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#  See the License for the specific language governing permissions and
+#  limitations under the License.
+#
+
+# The dependencies of the platform: what the compiled tree needs and OKDP does not
+# compile, installed with helm before it (bootstrap/README.md), each a release of its
+# upstream chart (or of a chart of this directory) with its values files of this
+# directory. okdp-sandbox's scripts/bootstrap.sh installs them in this order (with the
+# few steps of bootstrap/README.md before and between them: the namespaces and
+# their Pod Security levels, the CA bundle, the admission policies, the CoreDNS
+# patch, Keycloak's database, OpenBao's init);
+# scripts/check-bootstrap.sh checks that bootstrap/README.md's commands name these
+# charts and versions, and with --helm renders them.
+#   <release>: namespace, chart (an oci:// reference, or a chart name of repo, an
+#   https:// repository) and version, or path (a chart of this directory, no
+#   version), values (relative to this directory), timeout (helm --timeout, default
+#   5m)
+# Every chart that is not of this directory is pinned to its content, and
+# scripts/bootstrap.sh installs nothing else (a tag moved or a repository
+# compromised upstream installs nothing new, with cluster-admin):
+#   sha256   a chart of a repository (repo): the sha256 of its package, the .tgz
+#            helm pull downloads, checked before the install;
+#   digest   an OCI chart: the digest of its manifest, which the install names
+#            (oci://...@sha256:...: the registry serves that content or nothing).
+# The images are pinned in the values files, by digest (check-bootstrap.sh --helm
+# fails on one that is not). scripts/bump-bootstrap.sh prints the current sha256,
+# digests and the digests of the tags, to move them together with a version.
+releases:
+  cert-manager:
+    namespace: cert-manager
+    repo: https://charts.jetstack.io
+    chart: cert-manager
+    version: v1.21.2
+    sha256: 73a56e1728edd6c99f1f31082618c3259d279a76b7ebd3d4bdc5475c2442d34a
+    values: [cert-manager/values.yaml]
+  approver-policy:
+    namespace: cert-manager
+    repo: https://charts.jetstack.io
+    chart: cert-manager-approver-policy
+    version: v0.29.0
+    sha256: 26ed4380e709a6e0ef87bd9a5e4633806f66bc39896977143be17e2e4aa9d766
+    values: [approver-policy/values.yaml]
+  trust-manager:
+    namespace: cert-manager
+    repo: https://charts.jetstack.io
+    chart: trust-manager
+    version: v0.25.0
+    sha256: b271163e34fdf5c0894e56e568f3616c0db3a02d7ea5a8f9bcfd42f9f3e111f0
+    values: [trust-manager/values.yaml]
+  cert-issuers:
+    namespace: cert-manager
+    chart: oci://quay.io/okdp/charts/cert-issuers
+    version: 0.2.0
+    digest: sha256:b76c3386a1aa7d683b3db7c13a8e3a749073c4c965a4ae6a7dbbebdd46dabfa6
+    values: [cert-issuers/values.yaml]
+  reloader:
+    namespace: kube-tools
+    repo: https://stakater.github.io/stakater-charts
+    chart: reloader
+    version: 2.2.17
+    sha256: a17ee91d66785c29c17e5dfd038c13b0e35b23301b33f8fdb431b403d8a7a071
+    values: [reloader/values.yaml]
+  ingress-nginx:
+    namespace: ingress-nginx
+    repo: https://kubernetes.github.io/ingress-nginx
+    chart: ingress-nginx
+    version: 4.15.1
+    sha256: 3eff0bd18151d6e6b1c441463410571443dda1ac78292cb189346628de784f0c
+    values: [ingress-nginx/values.yaml]
+  dns-server:
+    namespace: dns-server
+    repo: https://coredns.github.io/helm
+    chart: coredns
+    version: 1.47.1
+    sha256: 1587165a85ec63dec4603e2889a8a6f5af9222a63893b8ecc254dfeb80c0e1e0
+    values: [dns-server/values.yaml]
+  cloudnative-pg:
+    namespace: cnpg-system
+    chart: oci://ghcr.io/cloudnative-pg/charts/cloudnative-pg
+    version: 0.29.1
+    digest: sha256:3245fa051bb21d0dd9246272f57a2760b4234817a164a3167d2a1e7fb9f63fd9
+    values: [cloudnative-pg/values.yaml]
+  external-secrets:
+    namespace: external-secrets
+    chart: oci://ghcr.io/external-secrets/charts/external-secrets
+    version: 2.11.0
+    digest: sha256:1191874a26691d8377d8ba28bfae54a718dda4750e10d40ae9ae4d570c88acfd
+    values: [external-secrets/values.yaml]
+  keycloak:
+    namespace: keycloak
+    repo: https://codecentric.github.io/helm-charts
+    chart: keycloakx
+    version: 7.3.2
+    sha256: 4ebb630c1f842245f7953be4f80ed080d1979ded25b31d48052f43f012e3c1d7
+    values: [keycloak/values.yaml, keycloak/realm.yaml]
+    timeout: 15m
+  rustfs:
+    namespace: rustfs
+    repo: https://charts.rustfs.com
+    chart: rustfs
+    version: 1.0.0
+    sha256: f11e9304fd4c3599ac365af9845ab4a2f99fab3edd30d0c8f89eb9428bcfb711
+    values: [rustfs/values.yaml]
+    timeout: 15m
+  openbao:
+    namespace: openbao
+    repo: https://openbao.github.io/openbao-helm
+    chart: openbao
+    version: 0.30.4
+    sha256: f9d464f0288a96374fcddb33abb31bc3f134ccaa32da3e4cf272f143b34bb96b
+    values: [openbao/values.yaml]
+  forgejo:
+    namespace: forgejo
+    chart: oci://code.forgejo.org/forgejo-helm/forgejo
+    version: 17.1.7
+    digest: sha256:f5044e73361f5991978f1bc281a570bf893fd0f468e7d76274a7853eb27428cf
+    values: [forgejo/values.yaml]
+  forgejo-runner:
+    namespace: forgejo
+    path: forgejo-runner
+    values: [forgejo-runner/values.yaml]

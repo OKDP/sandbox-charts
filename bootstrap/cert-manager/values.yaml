@@ -1,0 +1,44 @@
+# cert-manager: a dependency of the platform, installed with helm first
+# (bootstrap/README.md), from the upstream chart cert-manager v1.21.2 of
+# https://charts.jetstack.io:
+#   helm upgrade --install cert-manager cert-manager --repo https://charts.jetstack.io \
+#     --version v1.21.2 -n cert-manager --create-namespace --wait -f bootstrap/cert-manager/values.yaml
+# The certificates of every ingress (cert-manager.io/cluster-issuer: default-issuer, the
+# cluster issuer of bootstrap/cert-issuers, global.okdp.tls.clusterIssuer of the
+# platform values), the bootstrap's (Keycloak, RustFS, Forgejo) and the compiled
+# instances'. A cluster's own cert-manager may replace it, under the issuer the
+# platform names.
+crds:
+  enabled: true
+  # helm uninstall keeps them (deleting a CRD deletes every Certificate).
+  keep: true
+enableCertificateOwnerRef: true
+global:
+  # The deletion protection of bootstrap/protection: its controllers, their pods.
+  commonLabels:
+    okdp.io/protected: "true"
+# cert-manager's own approver, which approves every CertificateRequest, is off:
+# approver-policy (bootstrap/approver-policy) approves the requests a
+# CertificateRequestPolicy allows, and denies the others (default-issuer signs the
+# requesting namespace's hosts only). Until its policies are applied, a request waits.
+extraArgs:
+  - --controllers=*,-certificaterequests-approver
+# The images by digest (the chart renders repository:tag@digest, the tag the chart's
+# appVersion): a tag moved upstream pulls nothing else (scripts/bump-bootstrap.sh).
+image:
+  repository: quay.io/jetstack/cert-manager-controller
+  digest: sha256:70f532fd9cfde0b09d55687200942399d89838bc2d5d5b45152eb799a15912b8
+webhook:
+  image:
+    digest: sha256:a60e2dac46dbb8a7f3df95c54ce941012f54c2fe022f0ee55aaa1ab40ed957ae
+  extraArgs:
+    - --dynamic-serving-leaf-duration=2160h
+cainjector:
+  image:
+    digest: sha256:c85268c64f2e0e76684bf5fe8906caff34b82523561c6affe0fae3546bd87562
+startupapicheck:
+  image:
+    digest: sha256:46e75b6866359ffb5d82624f41e3ed1c70b2994982702ced547ce5edb418a8f5
+acmesolver:
+  image:
+    digest: sha256:699b40d622211ab7accad8a21b04c5fbaa1841ef7a12621e8de492dbe27b2503

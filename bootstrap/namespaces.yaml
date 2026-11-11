@@ -1,0 +1,240 @@
+#
+# Copyright 2026 The OKDP Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+#  Unless required by applicable law or agreed to in writing, software
+#  distributed under the License is distributed on an "AS IS" BASIS,
+#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#  See the License for the specific language governing permissions and
+#  limitations under the License.
+#
+
+# The namespaces of the bootstrap, applied first (bootstrap/README.md), each with
+# its Pod Security level (the admission of the API server, PSA): enforced
+# baseline (no privileged container, no host namespace or path, the capabilities
+# of baseline only), warned and audited restricted (what a pod lacks of it shows
+# in helm's and kubectl's output). forgejo is privileged: the CI runner's Docker
+# daemon (docker-in-docker, bootstrap/forgejo-runner) is rootless, no privileged
+# container, in a user namespace of its own, but needs seccomp Unconfined, /proc
+# unmasked and the node's /dev/net/tun, which baseline refuses; Forgejo shares the
+# namespace, baseline is warned there. argocd and flux-system are the engines' (okdp-sandbox's
+# step 5, one of them installed), created here so that they carry the levels from the
+# start. The releases' helm --create-namespace find them.
+#
+# The one list of the platform's own namespaces: the label okdp.io/platform. "true" on
+# the bootstrap's, the engines' and the privileged projects', "system" on the cluster's
+# own (kube-*, kind's local-path-storage). okdp-ingress-hosts and okdp-external-name
+# (protection/ingress-hosts.yaml) apply to every namespace but those, and the namespaces
+# labelled "true" alone are the ones the CertificateRequestPolicy okdp-platform
+# (approver-policy/policies.yaml) signs any name for. A namespace without the label, or
+# with any other value, stays subject to the policies: cnpg-system here, a confined
+# project, carries none. Only a cluster administrator changes it: okdp-platform-label
+# (protection/policies.yaml) refuses anyone else, a tenant or an engine, on a Namespace
+# created or updated.
+# The privileged projects (global.okdp.policy.privileged of the platform values,
+# okdp-sandbox's gitops/platform.yaml), okdp-system to nifikop at the end of this file:
+# keep them in step, okdp-sandbox's scripts/check.sh fails on a privileged project this
+# file does not label "true" and on a confined project it does. They and okdp-releases
+# (Flux's) carry no Pod Security label here: the compiler's Namespace sets their level
+# (kube-system and the like are left as they are too).
+#
+# Applied server-side, under a field manager of its own (bootstrap/README.md):
+#   kubectl apply --server-side --field-manager=okdp-bootstrap -f bootstrap/namespaces.yaml
+# Each engine applies the compiled Namespace of a privileged project over this one and
+# must not take the label away: a client-side apply would leave it in the
+# last-applied annotation, which Argo CD's three-way merge deletes, and Flux takes
+# over the fields of kubectl's own managers; okdp-platform-label would then refuse
+# their sync.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cert-manager
+  labels:
+    okdp.io/platform: "true"
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/audit: restricted
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kube-tools
+  labels:
+    okdp.io/platform: "true"
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/audit: restricted
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ingress-nginx
+  labels:
+    okdp.io/platform: "true"
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/audit: restricted
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: dns-server
+  labels:
+    okdp.io/platform: "true"
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/audit: restricted
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cnpg-system
+  labels:
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/audit: restricted
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: external-secrets
+  labels:
+    okdp.io/platform: "true"
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/audit: restricted
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: keycloak
+  labels:
+    okdp.io/platform: "true"
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/audit: restricted
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: rustfs
+  labels:
+    okdp.io/platform: "true"
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/audit: restricted
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: openbao
+  labels:
+    okdp.io/platform: "true"
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/audit: restricted
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: forgejo
+  labels:
+    okdp.io/platform: "true"
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/warn: baseline
+    pod-security.kubernetes.io/audit: baseline
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: argocd
+  labels:
+    okdp.io/platform: "true"
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/audit: restricted
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: flux-system
+  labels:
+    okdp.io/platform: "true"
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/audit: restricted
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: okdp-releases
+  labels:
+    okdp.io/platform: "true"
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: okdp-system
+  labels:
+    okdp.io/platform: "true"
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: spark-operator
+  labels:
+    okdp.io/platform: "true"
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: strimzi
+  labels:
+    okdp.io/platform: "true"
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: k8ssandra-operator
+  labels:
+    okdp.io/platform: "true"
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: nifikop
+  labels:
+    okdp.io/platform: "true"
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kube-system
+  labels:
+    okdp.io/platform: system
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kube-public
+  labels:
+    okdp.io/platform: system
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kube-node-lease
+  labels:
+    okdp.io/platform: system
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: local-path-storage
+  labels:
+    okdp.io/platform: system
