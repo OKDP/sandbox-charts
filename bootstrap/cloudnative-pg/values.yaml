@@ -1,0 +1,23 @@
+# CloudNativePG, the PostgreSQL operator: a dependency of the platform, installed with
+# helm before anything compiled (bootstrap/README.md), from the upstream chart
+# oci://ghcr.io/cloudnative-pg/charts/cloudnative-pg 0.29.1 (the operator 1.30.1):
+#   helm upgrade --install cloudnative-pg oci://ghcr.io/cloudnative-pg/charts/cloudnative-pg@sha256:3245fa051bb21d0dd9246272f57a2760b4234817a164a3167d2a1e7fb9f63fd9 \
+#     -n cnpg-system --create-namespace --wait -f bootstrap/cloudnative-pg/values.yaml
+# Its clusters: Keycloak's database (bootstrap/keycloak/database.yaml), applied at the
+# bootstrap, and the platform's database server, the compiled cnpg-postgresql, the
+# provider of the claims of databases. Its CRDs are protected by the bootstrap's
+# deletion protection (bootstrap/protection/policies.yaml: postgresql.cnpg.io).
+config:
+  clusterWide: true
+image:
+  repository: ghcr.io/cloudnative-pg/cloudnative-pg
+  pullPolicy: IfNotPresent
+  # By digest (scripts/bump-bootstrap.sh).
+  tag: "1.30.1@sha256:923c267ec29636db3bee20f993d0ec4973fa22998e1adad37da79e4d32b5bc07"
+resources:
+  requests:
+    cpu: 500m
+    memory: 500Mi
+  limits:
+    cpu: 1
+    memory: 1Gi

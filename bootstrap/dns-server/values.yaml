@@ -1,0 +1,78 @@
+# The sandbox's DNS server, for the host: a CoreDNS of the upstream chart coredns
+# 1.47.1 of https://coredns.github.io/helm, installed with helm (bootstrap/README.md),
+# not the cluster's:
+#   helm upgrade --install dns-server coredns --repo https://coredns.github.io/helm \
+#     --version 1.47.1 -n dns-server --create-namespace --wait -f bootstrap/dns-server/values.yaml
+# *.okdp.sandbox (global.okdp.ingress.suffix of the platform values) answered with
+# 127.0.0.1, where kind maps the ingress controller's ports, to anyone; every other
+# name forwarded to the node's resolvers (the pod's /etc/resolv.conf, dnsPolicy
+# Default: kind's node, Docker's DNS, the host's resolvers), never to a public
+# resolver the host does not use, and only for the host and the kind network
+# (acl: the private ranges of Docker's networks, recursion refused to the pods
+# and Services of the cluster, 10.0.0.0/8, which have the cluster's DNS). Reached
+# from the host at 127.0.0.1:30053 (okdp-sandbox's README, step 6: kind maps it
+# on 127.0.0.1 only, not on the host's network); the node port 30053 is also open
+# on the node's addresses, to the kind network and the cluster's pods. The
+# Service keeps the client's address (externalTrafficPolicy Local), which the
+# acl reads. A host that sends it every name (its only resolver, not a resolver
+# of okdp.sandbox only) would loop through the node's resolvers back to it: the
+# loop plugin stops the server; give that host a resolver of okdp.sandbox only
+# (okdp-sandbox's docs/dns-configuration.md), or forward to other resolvers
+# (forward below). No cluster role: it is no cluster service.
+# By digest (scripts/bump-bootstrap.sh).
+image:
+  tag: "1.14.6@sha256:900f9c109f7a33545d3c811516e8376df9019147b750f5ce3e254468769176ea"
+fullnameOverride: dns-server
+isClusterService: false
+rbac:
+  create: false
+serviceAccount:
+  create: false
+replicaCount: 1
+resources:
+  requests:
+    cpu: 50m
+    memory: 32Mi
+  limits:
+    cpu: 100m
+    memory: 128Mi
+serviceType: NodePort
+service:
+  externalTrafficPolicy: Local
+servers:
+  - zones:
+      - zone: okdp.sandbox.
+        use_tcp: true
+    port: 53
+    nodePort: 30053
+    plugins:
+      - name: errors
+      - name: log
+      - name: template
+        parameters: IN A okdp.sandbox
+        configBlock: answer "{{ .Name }} 60 IN A 127.0.0.1"
+      - name: template
+        parameters: ANY ANY okdp.sandbox
+        configBlock: rcode NOERROR
+  - zones:
+      - zone: .
+        use_tcp: true
+    port: 53
+    nodePort: 30053
+    plugins:
+      - name: errors
+      - name: health
+        configBlock: lameduck 5s
+      - name: ready
+      - name: log
+      - name: acl
+        configBlock: |-
+          allow net 127.0.0.0/8 172.16.0.0/12 192.168.0.0/16 fc00::/7 ::1/128
+          block
+      - name: forward
+        parameters: . /etc/resolv.conf
+      - name: cache
+        parameters: 30
+      - name: loop
+      - name: reload
+      - name: loadbalance

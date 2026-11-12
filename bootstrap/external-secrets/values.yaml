@@ -1,0 +1,37 @@
+# External Secrets Operator: a dependency of the platform, installed with helm before
+# anything compiled (bootstrap/README.md), from the upstream chart
+# oci://ghcr.io/external-secrets/charts/external-secrets 2.11.0:
+#   helm upgrade --install external-secrets oci://ghcr.io/external-secrets/charts/external-secrets@sha256:1191874a26691d8377d8ba28bfae54a718dda4750e10d40ae9ae4d570c88acfd \
+#     -n external-secrets --create-namespace --wait -f bootstrap/external-secrets/values.yaml
+# The platform's secret store is OpenBao (bootstrap/openbao): the compiler writes a
+# SecretStore of External Secrets' vault provider in each project's namespace
+# (global.okdp.secrets of platform.yaml); nothing of the store is created here.
+#
+# ESO 2.x serves external-secrets.io/v1 only (v1beta1 is no longer served:
+# crds.unsafeServeV1Beta1 stays false), the version okdp-lib and the charts render;
+# generators.external-secrets.io stays v1alpha1.
+# The three components' image by digest (scripts/bump-bootstrap.sh).
+image:
+  tag: v2.11.0@sha256:66fb710878cbf3eba4a927e35c5d75e29a202c9bab238aad64bfb23b786b962b
+installCRDs: true
+crds:
+  # The v1alpha1 conversion webhook is gone upstream (off by default since 1.0).
+  conversion:
+    enabled: false
+  # Kept on uninstall; deletion is also refused by the bootstrap's deletion
+  # protection (bootstrap/protection/policies.yaml: external-secrets.io).
+  annotations:
+    helm.sh/resource-policy: keep
+# Controllers labelled for the deletion protection (bootstrap/protection).
+commonLabels:
+  okdp.io/protected: "true"
+# Images: the chart's default registry is ghcr.io (the former oci.external-secrets.io
+# mirror, blocked by some corporate proxies, is no longer the default).
+webhook:
+  create: true
+  image:
+    tag: v2.11.0@sha256:66fb710878cbf3eba4a927e35c5d75e29a202c9bab238aad64bfb23b786b962b
+certController:
+  create: true
+  image:
+    tag: v2.11.0@sha256:66fb710878cbf3eba4a927e35c5d75e29a202c9bab238aad64bfb23b786b962b

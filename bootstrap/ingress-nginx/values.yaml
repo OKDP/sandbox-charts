@@ -1,0 +1,40 @@
+# ingress-nginx: a dependency of the platform, installed with helm after cert-manager
+# (bootstrap/README.md), from the upstream chart ingress-nginx 4.15.1 of
+# https://kubernetes.github.io/ingress-nginx:
+#   helm upgrade --install ingress-nginx ingress-nginx --repo https://kubernetes.github.io/ingress-nginx \
+#     --version 4.15.1 -n ingress-nginx --create-namespace --wait -f bootstrap/ingress-nginx/values.yaml
+# The ingress controller of every service (class nginx, global.okdp.ingress.className
+# of the platform values) on the node ports kind maps to the host (80 -> 30080, 443 ->
+# 30443, okdp-sandbox's README, step 2). Its Service,
+# ingress-nginx-controller.ingress-nginx, is what the CoreDNS patch answers for
+# *.<suffix> (bootstrap/coredns/patch.sh). A cluster's own controller may replace it,
+# under the class the platform names. ingress-nginx is retired upstream: 4.15.1 is its
+# last release.
+#
+# The admission webhook off (chart's own): the compile and the VAP okdp-ingress-hosts
+# (bootstrap/protection) already bound what an Ingress of a project may serve, and the
+# webhook's port, 8443, would be open to every pod (a NetworkPolicy cannot name the API
+# server, bootstrap/network-policies.yaml) in front of a controller with a cluster-wide
+# Secret read (the CVE-2025-1974 class), on a retired controller. Nothing replaces its
+# one service, refusing an Ingress whose rendered nginx configuration does not load:
+# such an Ingress is applied, and the controller keeps its last good configuration and
+# logs the error (a project's bad annotation can hold new Ingress reloads back until
+# removed). disable-svc-external-name: a project's Service of type ExternalName would
+# be proxied to its external name (keycloak-http.keycloak.svc, another project's
+# Service), past the NetworkPolicies; the VAP okdp-external-name refuses it upstream,
+# this is the controller's half.
+controller:
+  admissionWebhooks:
+    enabled: false
+  extraArgs:
+    disable-svc-external-name: "true"
+  allowSnippetAnnotations: false
+  ingressClass: nginx
+  ingressClassResource:
+    name: nginx
+    controllerValue: k8s.io/ingress-nginx
+  service:
+    type: NodePort
+    nodePorts:
+      http: "30080"
+      https: "30443"
