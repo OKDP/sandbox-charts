@@ -1,0 +1,45 @@
+#
+# Copyright 2026 The OKDP Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+#  Unless required by applicable law or agreed to in writing, software
+#  distributed under the License is distributed on an "AS IS" BASIS,
+#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#  See the License for the specific language governing permissions and
+#  limitations under the License.
+#
+
+# The consumers of the realm's client secrets (bootstrap/keycloak/realm.yaml): for
+# each client whose secret a compiled instance reads from the platform's secret
+# store, the namespaces that read it. init.sh writes the client's secret (the key
+# <client> of Secret keycloak/keycloak-client-secrets) under
+# <namespace>/keycloak/<client> of each, property client_secret, which only that
+# namespace reads (the policy's <namespace>/* path); never under platform/, which
+# no namespace reads. A client absent from here is not written (init.sh names
+# it): forgejo (Forgejo reads keycloak-client-secrets itself), jupyterhub (the demo
+# generates its Secret), svc-spark-etl-polaris-writer (no consumer in the sandbox).
+# Add a client, or a namespace, when an instance reads it (local-secrets-provider,
+# remoteKey <namespace>/keycloak/<client>), then run init.sh again.
+#   <client>: [<namespace>...]   a namespace name, not platform
+clients:
+  # The console's user and group management (okdp-control-plane-server,
+  # okdp-system/local-secrets-provider): manage-users of the realm okdp only
+  # (realm-management).
+  okdp-control-plane: [okdp-system]
+  # The services of the demo (demo/secrets): their login clients
+  # (clientProvisioning: existing), their service accounts, and those of
+  # okdp-examples (gitops/optional).
+  trino: [demo]
+  superset: [demo]
+  superset-trino: [demo]
+  spark-history: [demo]
+  airflow: [demo]
+  polaris: [demo]
+  svc-trino-polaris-writer: [demo]
+  svc-trino-examples-writer: [demo]
+  svc-polaris-api-admin: [demo]

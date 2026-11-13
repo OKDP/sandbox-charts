@@ -1,0 +1,38 @@
+#
+# Copyright 2026 The OKDP Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+#  Unless required by applicable law or agreed to in writing, software
+#  distributed under the License is distributed on an "AS IS" BASIS,
+#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#  See the License for the specific language governing permissions and
+#  limitations under the License.
+#
+
+# The consumers of the platform's S3 identity: Secret rustfs/rustfs-okdp, the
+# identity the RustFS release generates for the platform (bootstrap/rustfs,
+# platformAccess: s3:* on the platform's buckets, okdp, lakehouse, bronze, silver
+# and gold, and sts:AssumeRole for Polaris' vended credentials). init.sh writes it
+# under <namespace>/s3/platform of each namespace listed here, properties accessKey
+# and secretKey, which only that namespace reads (the policy's <namespace>/* path),
+# never under platform/, which no namespace reads: a project's connection of the
+# store names that key (secretRef.remoteKey <namespace>/s3/platform, okdp-sandbox's
+# demo project.yaml, connection platform-s3). A namespace absent from here gets none:
+# its services claim buckets of their own (the class s3 of platform.yaml, the
+# provider s3-system/s3-minio-provisioner), each with an identity limited to its
+# bucket; a namespace removed from here has its key deleted at the next run. Add a
+# namespace only when its services share the platform's buckets, then run init.sh
+# again.
+#   namespaces: [<namespace>...]   a namespace name, not platform
+namespaces:
+  # The demo's services, one lakehouse: hive's warehouse and Spark's event logs
+  # (okdp), Trino's catalogs, Polaris' catalogs and their vended credentials
+  # (lakehouse, silver, gold), JupyterHub's file browser and PySpark sessions
+  # (bronze, silver, gold), Airflow's DAGs' object store, okdp-examples
+  # (gitops/optional).
+  - demo

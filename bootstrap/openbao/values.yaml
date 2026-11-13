@@ -1,0 +1,289 @@
+#
+# Copyright 2026 The OKDP Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+#  Unless required by applicable law or agreed to in writing, software
+#  distributed under the License is distributed on an "AS IS" BASIS,
+#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#  See the License for the specific language governing permissions and
+#  limitations under the License.
+#
+
+# OpenBao, the platform's secret store: a dependency of the platform, installed with
+# helm before anything compiled (bootstrap/README.md), from the upstream chart
+# openbao/openbao 0.30.4 (OpenBao 2.7.1), as a company installs its own secret
+# manager:
+#   helm upgrade --install openbao openbao --repo https://openbao.github.io/openbao-helm --version 0.30.4 \
+#     -n openbao --create-namespace --wait -f bootstrap/openbao/values.yaml
+#   bootstrap/openbao/init.sh
+# after Keycloak and RustFS (init.sh copies the secrets of the realm's clients and
+# the platform's S3 access key into the store).
+#
+# What crosses namespaces goes through it (global.okdp.secrets of platform.yaml):
+# the compiler writes in each project's namespace a ServiceAccount okdp-secrets and
+# a SecretStore okdp-secrets of External Secrets' vault provider, which signs in to
+# OpenBao with that ServiceAccount (Kubernetes auth, role okdp) and gets the policy
+# okdp, templated on the namespace of the ServiceAccount (init.sh), on the KV v2
+# mount okdp:
+#   - a provider pushes the credentials of each claim under
+#     <its namespace>/<claim ID> (PushSecret), a claim's ID starting with its
+#     claimers' namespace; the claimers read <any namespace>/<their namespace>.*
+#     (ExternalSecret), nothing else of the other namespaces; a project's own
+#     connection reads keys of <its namespace>/ only;
+#   - no namespace reads platform/, which holds no key: the namespace platform is
+#     reserved (the compiler refuses a project of that name; nothing else may run
+#     there with a ServiceAccount okdp-secrets, which would get platform/*);
+#   - the platform's identity of the S3 store, under <namespace>/s3/platform of
+#     each namespace that uses it (init.sh, s3.yaml: demo), written at the
+#     bootstrap by init.sh; the other namespaces claim buckets of their own;
+#   - the secret of a client of the realm, under <namespace>/keycloak/<client> of
+#     each namespace that reads it (init.sh, clients.yaml: okdp-control-plane in
+#     okdp-system, the services' clients in demo), written at the bootstrap by
+#     init.sh too; no client secret is under platform/.
+# A Vault, or a cloud secret manager External Secrets has a provider for, takes
+# OpenBao's place: the same policy on its side (the paths of init.sh, the namespace
+# of the identity that signs in), its provider in platform.yaml
+# (global.okdp.secrets.provider), the keys of init.sh written there.
+#
+# The release: one standalone server (the chart's StatefulSet), its storage the
+# pebbledb backend (durable, one node; OpenBao 2.7 removed the file backend) on a
+# PersistentVolumeClaim; no agent injector, no CSI driver, no UI. The containers
+# run as the chart's non-root user, without privilege escalation or capability.
+#
+# TLS: the listener serves https only, on 8200, with the certificate of the
+# Certificate openbao-tls below (extraObjects: in this release, after
+# cert-manager and the cluster issuers), issued by the platform's cluster issuer
+# default-issuer (bootstrap/cert-issuers), Secret openbao-tls, for the names of
+# the Service, openbao, openbao.openbao, openbao.openbao.svc and
+# openbao.openbao.svc.cluster.local, and for localhost and 127.0.0.1: the bao of
+# the pod (init.sh, the unseal sidecar) calls https://127.0.0.1:8200 and checks
+# the certificate against the issuer's CA (BAO_CACERT, ca.crt of that Secret),
+# never -tls-skip-verify. The clients, External Secrets' SecretStores, call
+# https://openbao.openbao.svc.cluster.local:8200 and trust the platform's CA
+# bundle, Secret certs-bundle, key ca.crt, which trust-manager writes to every
+# namespace (bootstrap/trust-manager/bundle.yaml). cert-manager renews the
+# certificate (90 days, 30 before the end) and Reloader restarts the server on
+# the new Secret (the annotation of the StatefulSet below): sealed again, the
+# sidecar unseals it.
+#
+# The Kubernetes auth (init.sh): the role okdp takes only the tokens of audience
+# openbao (External Secrets requests them so, the SecretStore's
+# serviceAccountRef.audiences), the role okdp-bootstrap only the ServiceAccount
+# okdp-bootstrap of this namespace (below), as which init.sh signs in when run
+# again. No root token is kept: init.sh revokes the one of the initialization
+# once okdp-bootstrap signs in.
+#
+# SANDBOX ONLY. A sealed OpenBao answers nothing: init.sh initializes it with ONE
+# unseal key share and keeps that key in Secret openbao/openbao-init, and the
+# sidecar unseal below reads the key from that Secret at every start of the pod
+# (the server seals at every restart): whoever reads that Secret and the volume
+# of the store reads every credential of the platform: the unseal key is root-
+# equivalent, bao operator generate-root takes it and no token to mint a new root
+# token (that is also the way back in if the role okdp-bootstrap is lost). On a
+# platform, the unseal key shares are held by people, or the seal is a KMS
+# (auto-unseal).
+
+injector:
+  enabled: false
+csi:
+  enabled: false
+ui:
+  enabled: false
+
+global:
+  # https: the chart's probes, BAO_ADDR (https://127.0.0.1:8200) and ports.
+  tlsDisable: false
+
+server:
+  # By digest (scripts/bump-bootstrap.sh): the server's, the unseal sidecar's below.
+  image:
+    tag: 2.7.1@sha256:6d2b93856e3fcf7b18ad855a0b51eaba474dc8b79cf554379ea32034797d2acf
+  standalone:
+    enabled: true
+    config: |
+      ui = false
+      listener "tcp" {
+        tls_disable = 0
+        address = "[::]:8200"
+        cluster_address = "[::]:8201"
+        tls_cert_file = "/openbao/tls/tls.crt"
+        tls_key_file = "/openbao/tls/tls.key"
+        tls_min_version = "tls12"
+      }
+      storage "pebbledb" {
+        path = "/openbao/data/pebbledb"
+      }
+  dataStorage:
+    enabled: true
+    size: 1Gi
+    storageClass: null
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 512Mi
+  # Ready while sealed or not initialized (the chart's probe, bao status, is not):
+  # helm --wait returns right after the install, and init.sh initializes and
+  # unseals the server through the pod.
+  readinessProbe:
+    path: /v1/sys/health?standbyok=true&sealedcode=204&uninitcode=204
+  # The TokenReview of the Kubernetes auth: the chart binds the server's
+  # ServiceAccount to system:auth-delegator (authDelegator, on by default).
+  authDelegator:
+    enabled: true
+  # The CA of the server's certificate, for the bao of the pod (kubectl exec,
+  # BAO_ADDR https://127.0.0.1:8200, the chart's).
+  extraEnvironmentVars:
+    BAO_CACERT: /openbao/tls/ca.crt
+  # A new certificate (cert-manager's renewal): the server restarted by Reloader, whose
+  # template change rolls the pod only with this update strategy (the chart's default
+  # is OnDelete: the old certificate stays until it expires at day 90).
+  updateStrategyType: RollingUpdate
+  statefulSet:
+    annotations:
+      secret.reloader.stakater.com/reload: openbao-tls
+    securityContext:
+      # The chart's own, and no capability: OpenBao has no mlock any more, and the
+      # image's entrypoint sets none (SKIP_SETCAP).
+      container:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: [ALL]
+  volumeMounts:
+    - name: tls
+      mountPath: /openbao/tls
+      readOnly: true
+  # The server's certificate (the Certificate below: the pod waits for its
+  # Secret); the unseal key of init.sh, mounted when the Secret exists (optional:
+  # before init.sh, the pod starts without it).
+  volumes:
+    - name: tls
+      secret:
+        secretName: openbao-tls
+        defaultMode: 0440
+    - name: init
+      secret:
+        secretName: openbao-init
+        optional: true
+        items:
+          - {key: unseal-key, path: unseal-key}
+  extraContainers:
+    # SANDBOX ONLY: unseals the server with the key of Secret openbao-init whenever
+    # it is sealed (the exit status of bao status: 0 unsealed, 1 unreachable, 2
+    # sealed), at every restart of the pod. The key is a file of the mounted Secret;
+    # bao reads it as an argument, in this pod only.
+    - name: unseal
+      image: '{{ .Values.server.image.registry }}/{{ .Values.server.image.repository }}:{{ .Values.server.image.tag | default (trimPrefix "v" .Chart.AppVersion) }}'
+      imagePullPolicy: IfNotPresent
+      command: [/bin/sh, -c]
+      args:
+        - |
+          key=/openbao/init/unseal-key
+          while :; do
+            bao status >/dev/null 2>&1
+            if [ $? -eq 2 ] && [ -s "${key}" ]; then
+              bao operator unseal "$(cat "${key}")" >/dev/null && echo "openbao: unsealed"
+            fi
+            sleep 5
+          done
+      env:
+        - name: BAO_ADDR
+          value: https://127.0.0.1:8200
+        - name: BAO_CACERT
+          value: /openbao/tls/ca.crt
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop: [ALL]
+      resources:
+        requests:
+          cpu: 10m
+          memory: 16Mi
+        limits:
+          memory: 64Mi
+      volumeMounts:
+        - name: init
+          mountPath: /openbao/init
+          readOnly: true
+        - name: tls
+          mountPath: /openbao/tls
+          readOnly: true
+
+# Rendered by the chart through tpl.
+extraObjects:
+  # The server's certificate, from the platform's cluster issuer.
+  - apiVersion: cert-manager.io/v1
+    kind: Certificate
+    metadata:
+      name: openbao-tls
+      namespace: '{{ .Release.Namespace }}'
+    spec:
+      secretName: openbao-tls
+      issuerRef:
+        kind: ClusterIssuer
+        name: default-issuer
+      commonName: '{{ include "openbao.fullname" . }}.{{ .Release.Namespace }}.svc'
+      dnsNames:
+        - '{{ include "openbao.fullname" . }}'
+        - '{{ include "openbao.fullname" . }}.{{ .Release.Namespace }}'
+        - '{{ include "openbao.fullname" . }}.{{ .Release.Namespace }}.svc'
+        - '{{ include "openbao.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local'
+        - localhost
+      ipAddresses: [127.0.0.1]
+      duration: 2160h
+      renewBefore: 720h
+      privateKey:
+        algorithm: ECDSA
+        size: 256
+        rotationPolicy: Always
+      usages: [server auth, digital signature, key encipherment]
+  # The identity of init.sh when run again (role okdp-bootstrap of the Kubernetes
+  # auth): its tokens are created by kubectl create token (audience openbao, 10
+  # minutes), by whoever may create them in this namespace; no pod runs as it.
+  - apiVersion: v1
+    kind: ServiceAccount
+    metadata:
+      name: okdp-bootstrap
+      namespace: '{{ .Release.Namespace }}'
+    automountServiceAccountToken: false
+  # The network (bootstrap/README.md, Network policies): nothing reaches the
+  # namespace but External Secrets' controller, the store's only client
+  # (SecretStores, PushSecrets), on 8200; init.sh and the unseal sidecar call
+  # 127.0.0.1 in the pod, the kubelet's probes come from the node.
+  - apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata:
+      name: default-deny-ingress
+      namespace: '{{ .Release.Namespace }}'
+    spec:
+      podSelector: {}
+      policyTypes: [Ingress]
+  - apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata:
+      name: openbao-from-external-secrets
+      namespace: '{{ .Release.Namespace }}'
+    spec:
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: '{{ include "openbao.name" . }}'
+          app.kubernetes.io/instance: '{{ .Release.Name }}'
+          component: server
+      policyTypes: [Ingress]
+      ingress:
+        - from:
+            - namespaceSelector:
+                matchLabels:
+                  kubernetes.io/metadata.name: external-secrets
+              podSelector:
+                matchLabels:
+                  app.kubernetes.io/name: external-secrets
+          ports:
+            - {protocol: TCP, port: 8200}
