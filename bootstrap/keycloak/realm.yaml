@@ -1,0 +1,797 @@
+#
+# Copyright 2026 The OKDP Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+#  Unless required by applicable law or agreed to in writing, software
+#  distributed under the License is distributed on an "AS IS" BASIS,
+#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#  See the License for the specific language governing permissions and
+#  limitations under the License.
+#
+
+# The realm of the sandbox, okdp, the second values file of the Keycloak release
+# (bootstrap/README.md): keycloak-config-cli applies it after every install and
+# upgrade (values.yaml, the Secret keycloak-realm and the Job keycloak-config-cli), in
+# keycloak-config-cli's format, the realm export of Keycloak. It is the sandbox's
+# realm, written out. The realm is
+# declarative: keycloak-config-cli makes Keycloak's realm match this file, role
+# mappings and user profile included; what is changed by hand in Keycloak is undone at
+# the next upgrade. {{ .Values.domain }} is the domain of values.yaml (rendered by
+# Helm).
+#
+# The applications and the people live here, in the realm okdp, the issuer
+# https://keycloak.<domain>/realms/okdp of the platform (global.okdp.oidc of
+# okdp-sandbox's gitops/platform.yaml); the realm master holds Keycloak's
+# administrators only (its admin, values.yaml; masterRealm there): an administrator
+# of the platform's realm is not one of Keycloak's.
+#
+# No client secret is written here: each client's secret is
+# "$(file:UTF-8:/secrets/clients/<client>)", which keycloak-config-cli replaces, when
+# it reads this file, with the content of that file (its variable substitution,
+# IMPORT_VARSUBSTITUTION_ENABLED of its Job, values.yaml): the key <client> of Secret
+# keycloak/keycloak-client-secrets, mounted there, 32 random bytes in hexadecimal that
+# client-secrets.sh generates once before the release is installed
+# (bootstrap/README.md). bootstrap/openbao/init.sh copies each into the platform's
+# secret store, <namespace>/keycloak/<client> (property client_secret) of each
+# namespace that reads it (bootstrap/openbao/clients.yaml), which the compiled
+# instances there read (okdp-system/local-secrets-provider, demo/secrets:
+# remoteKey): Keycloak and the cluster hold the same secret, which nothing sets by
+# hand. A client added here gets its secret at the next run of client-secrets.sh
+# (bootstrap.sh runs it); a missing file fails the import (an undefined variable is an
+# error).
+#
+# SANDBOX ONLY: the demo users' passwords below are published test fixtures, the
+# sign-in of people trying the sandbox (password = user name; okdp-sandbox's README,
+# Security notice), not service credentials.
+#   roles          the realm roles, carried in the groups claim (client scope groups)
+#                  that the services, Argo CD and Forgejo map to their own roles
+#   groups         the people of the platform (okdp-sandbox's gitops/platform.yaml,
+#                  global.okdp.access.admins: platform_admin, which also gives its
+#                  members the realm role platform_admin) and of each project,
+#                  okdp-project-<namespace>, the editors of the project by default
+#                  (its project.yaml access): the compiled AppProject's roles and
+#                  RoleBindings of the namespace, Forgejo's teams
+#                  (scripts/configure.sh --push --sign-in, the group-team map); one
+#                  per project of okdp-sandbox's gitops/projects/ and
+#                  gitops/optional/projects/, the platform's without members, the
+#                  demo's its users; also in the groups claim, by name (the mapper
+#                  group_names, Full group path off: a name means one group)
+#   users          the demo users (password = user name, test fixtures); the service
+#                  accounts of the svc-* clients, named by the Polaris principals and
+#                  the Trino rules; service-account-okdp-control-plane, the console's
+#                  user and group management (Keycloak Admin API, the roles below of
+#                  realm-management, this realm's management client: the users and
+#                  groups of okdp only, nothing of master nor of the realm's clients,
+#                  declared since keycloak-config-cli removes undeclared mappings)
+#   token exchange the SQL editor's statements on Trino (RFC 8693, Keycloak's standard
+#                  token exchange, 26.2 or later): the console's API trades the
+#                  caller's token of okdp-ui for one of the audience trino, as the
+#                  client okdp-control-plane (standard.token.exchange.enabled),
+#                  distinct from okdp-ui: the exchanged token is not one the API
+#                  accepts. Keycloak requires the requester in the subject token's
+#                  audience (client scope okdp-control-plane-audience, okdp-ui's) and
+#                  the requested audience among the requester's (trino-audience,
+#                  okdp-control-plane's); neither is a realm default, so a client
+#                  registered by DCR cannot ask for them. The value of the server's
+#                  SQL_TOKEN_EXCHANGE_AUDIENCE, trino: a client of this realm, and an
+#                  additional audience of a Trino whose client is registered by DCR
+#                  (platform-charts' trino package)
+#   clients        okdp-ui and okdp-server, the console's own clients (public); argocd
+#                  (public) and forgejo, their sign-in (Forgejo's OAuth source reads
+#                  the secret from keycloak-client-secrets, okdp-sandbox's README, step 5); the
+#                  services' login clients, used with
+#                  global.okdp.oidc.clientProvisioning: existing only (the sandbox
+#                  registers them by DCR); the svc-* service accounts and
+#                  superset-trino; okdp-control-plane, the console's user and group
+#                  management
+#   defaultDefaultClientScopes
+#                  Keycloak's default client scopes, and groups: the oidc-dcr Jobs
+#                  register the services' clients with an initial access token
+#                  (global.okdp.oidc.dcr.authMethod: initialAccessToken, minted per
+#                  namespace by bootstrap/openbao/init.sh), whose policy (Allowed
+#                  Client Scopes, authenticated) admits the realm's default scopes;
+#                  they ask for profile, email and groups
+#   components     two client registration policies of authenticated registration
+#                  (the oidc-dcr Jobs' initial access tokens), beside Keycloak's own,
+#                  created with the realm and kept (keycloak-config-cli deletes only
+#                  what it created: anonymous registration stays refused, Trusted
+#                  Hosts: none, an anonymous client gets Full Scope Disabled and
+#                  Consent Required):
+#                    OKDP Trusted Hosts     every URL of a registered client (redirect
+#                                           URIs, rootUrl, baseUrl, adminUrl) under
+#                                           *.{{ .Values.domain }}; the registering
+#                                           Job's own address is not checked
+#                    OKDP Consent Required  a client registered with a token asks for
+#                                           the user's consent on the first sign-in,
+#                                           so that a phished link shows what it grants
+#                  What Keycloak's policies, hence keycloak-config-cli, can express
+#                  stops there. A policy is one per realm and kind of registration, not
+#                  per token: Trusted Hosts cannot say that the token of namespace
+#                  demo registers only *.demo.{{ .Values.domain }}, so a project's
+#                  client may still name another project's host. That check is the
+#                  compiler's, on the redirect URIs it compiles (OBJ-03's other half,
+#                  in okdp-compiler). Full Scope Disabled is not set on authenticated
+#                  registration: a service's token carries its realm roles.
+#   userProfile    Keycloak's default attributes, then comment and uid, the console's
+#                  user fields
+realm:
+  realm: okdp
+  enabled: true
+  displayName: OKDP
+  components:
+    org.keycloak.services.clientregistration.policy.ClientRegistrationPolicy:
+      - name: OKDP Trusted Hosts
+        providerId: trusted-hosts
+        subType: authenticated
+        subComponents: {}
+        config:
+          host-sending-registration-request-must-match: ["false"]
+          client-uris-must-match: ["true"]
+          trusted-hosts: ["*.{{ .Values.domain }}"]
+      - name: OKDP Consent Required
+        providerId: consent-required
+        subType: authenticated
+        subComponents: {}
+        config: {}
+  defaultDefaultClientScopes:
+    - acr
+    - basic
+    - email
+    - groups
+    - profile
+    - roles
+    - web-origins
+  accessTokenLifespan: 3600
+  ssoSessionIdleTimeout: 3600
+  ssoSessionMaxLifespan: 36000
+  bruteForceProtected: true
+  permanentLockout: false
+  failureFactor: 10
+  waitIncrementSeconds: 60
+  maxFailureWaitSeconds: 900
+  attributes:
+    userProfileEnabled: "true"
+  roles:
+    realm:
+      - name: data_engineer
+      - name: data_scientist
+      - name: business_analyst
+      - name: platform_admin
+      - name: data_steward
+      - name: auditor
+      - name: polaris_service_admin
+      - name: polaris_catalog_admin
+  groups:
+    - name: platform_admin
+      realmRoles:
+        - platform_admin
+    - name: okdp-project-cnpg-system
+    - name: okdp-project-default
+    - name: okdp-project-demo
+    - name: okdp-project-okdp-system
+    - name: okdp-project-s3-system
+    - name: okdp-project-spark-operator
+    # The optional projects (okdp-sandbox's gitops/optional/projects).
+    - name: okdp-project-k8ssandra-operator
+    - name: okdp-project-nifikop
+    - name: okdp-project-strimzi
+  users:
+    - username: bob
+      credentials:
+        - type: password
+          value: bob
+      email: bob@okdp.io
+      emailVerified: true
+      enabled: true
+      firstName: bob
+      lastName: bob
+      groups:
+        - /okdp-project-demo
+      realmRoles:
+        - data_engineer
+    - username: mark
+      credentials:
+        - type: password
+          value: mark
+      email: mark@okdp.io
+      emailVerified: true
+      enabled: true
+      firstName: mark
+      lastName: mark
+      groups:
+        - /okdp-project-demo
+      realmRoles:
+        - data_scientist
+    - username: nina
+      credentials:
+        - type: password
+          value: nina
+      email: nina@okdp.io
+      emailVerified: true
+      enabled: true
+      firstName: nina
+      lastName: nina
+      groups:
+        - /okdp-project-demo
+      realmRoles:
+        - business_analyst
+    - username: grace
+      credentials:
+        - type: password
+          value: grace
+      email: grace@okdp.io
+      emailVerified: true
+      enabled: true
+      firstName: grace
+      lastName: grace
+      groups:
+        - /okdp-project-demo
+      realmRoles:
+        - data_steward
+    - username: alice
+      credentials:
+        - type: password
+          value: alice
+      email: alice@okdp.io
+      emailVerified: true
+      enabled: true
+      firstName: alice
+      lastName: alice
+      groups:
+        - /platform_admin
+      realmRoles:
+        - polaris_service_admin
+        - polaris_catalog_admin
+    - username: eve
+      credentials:
+        - type: password
+          value: eve
+      email: eve@okdp.io
+      emailVerified: true
+      enabled: true
+      firstName: eve
+      lastName: eve
+      realmRoles:
+        - auditor
+    - username: adm
+      credentials:
+        - type: password
+          value: adm
+      email: adm@okdp.io
+      emailVerified: true
+      enabled: true
+      firstName: adm
+      lastName: adm
+      groups:
+        - /platform_admin
+      realmRoles:
+        - polaris_service_admin
+        - polaris_catalog_admin
+    - username: svc-spark-etl-polaris-writer
+      email: ""
+      emailVerified: true
+      enabled: true
+      firstName: ""
+      lastName: ""
+      realmRoles:
+        - data_engineer
+        - data_scientist
+        - business_analyst
+      serviceAccountClientId: svc-spark-etl-polaris-writer
+    - username: svc-polaris-api-admin
+      email: ""
+      emailVerified: true
+      enabled: true
+      firstName: ""
+      lastName: ""
+      realmRoles:
+        - polaris_service_admin
+        - polaris_catalog_admin
+      serviceAccountClientId: svc-polaris-api-admin
+    - username: service-account-okdp-control-plane
+      clientRoles:
+        realm-management:
+          - view-users
+          - query-users
+          - manage-users
+          - query-groups
+      email: ""
+      emailVerified: true
+      enabled: true
+      firstName: ""
+      lastName: ""
+      realmRoles: []
+      serviceAccountClientId: okdp-control-plane
+    # Trino's client toward Polaris: its Polaris roles only (polaris_*, mapped to Polaris
+    # principal roles), not platform_admin, the platform's administrators' role, which
+    # tokens carry in the groups claim: this account's secret is readable in demo
+    # (openbao/clients.yaml), and only the audience checks of the services keep it out of
+    # their administration screens. If a realm imported earlier
+    # still holds the role after the import, remove it in the admin console (Users,
+    # service-account-svc-trino-polaris-writer).
+    - username: svc-trino-polaris-writer
+      email: ""
+      emailVerified: true
+      enabled: true
+      firstName: ""
+      lastName: ""
+      realmRoles:
+        - polaris_service_admin
+        - polaris_catalog_admin
+      serviceAccountClientId: svc-trino-polaris-writer
+  clients:
+    - clientId: okdp-server
+      attributes:
+        pkce.code.challenge.method: S256
+      name: okdp-server
+      publicClient: true
+      redirectUris:
+        - https://okdp-server.{{ .Values.domain }}/swagger/oauth2-redirect.html
+      webOrigins:
+        - https://okdp-server.{{ .Values.domain }}
+    - clientId: okdp-ui
+      # No device grant (nothing of OKDP signs in with it): a public client's
+      # device codes are anyone's to request and to phish a user with. Explicitly
+      # off, so that the import turns it off where it was on.
+      attributes:
+        oauth2.device.authorization.grant.enabled: "false"
+        pkce.code.challenge.method: S256
+      defaultClientScopes:
+        - web-origins
+        - acr
+        - roles
+        - profile
+        - groups
+        - basic
+        - email
+        - okdp-control-plane-audience
+      name: okdp-ui
+      optionalClientScopes:
+        - offline_access
+      publicClient: true
+      redirectUris:
+        - https://okdp-ui.{{ .Values.domain }}
+        - https://okdp-ui.{{ .Values.domain }}/*
+        - http://127.0.0.1/*
+      webOrigins:
+        - https://okdp-ui.{{ .Values.domain }}
+    - clientId: argocd
+      attributes:
+        pkce.code.challenge.method: S256
+      defaultClientScopes:
+        - web-origins
+        - acr
+        - roles
+        - profile
+        - groups
+        - basic
+        - email
+      name: argocd
+      publicClient: true
+      redirectUris:
+        - https://argocd.{{ .Values.domain }}/auth/callback
+        - http://localhost:8085/auth/callback
+      webOrigins:
+        - https://argocd.{{ .Values.domain }}
+    - clientId: forgejo
+      defaultClientScopes:
+        - web-origins
+        - acr
+        - roles
+        - profile
+        - groups
+        - basic
+        - email
+      name: forgejo
+      redirectUris:
+        - https://forgejo.{{ .Values.domain }}/user/oauth2/keycloak/callback
+      secret: "$(file:UTF-8:/secrets/clients/forgejo)"
+      webOrigins: []
+    - clientId: polaris-console
+      attributes:
+        pkce.code.challenge.method: S256
+      defaultClientScopes:
+        - web-origins
+        - acr
+        - roles
+        - profile
+        - groups
+        - basic
+        - email
+      name: polaris-console
+      optionalClientScopes:
+        - offline_access
+      publicClient: true
+      redirectUris:
+        - https://polaris-console.{{ .Values.domain }}/*
+      webOrigins:
+        - https://polaris-console.{{ .Values.domain }}
+    - clientId: superset
+      defaultClientScopes:
+        - web-origins
+        - acr
+        - roles
+        - profile
+        - groups
+        - basic
+        - email
+      name: superset
+      optionalClientScopes:
+        - address
+        - phone
+        - organization
+        - offline_access
+        - microprofile-jwt
+      redirectUris:
+        - https://superset.{{ .Values.domain }}/api/v1/security/oauth-authorized/keycloak
+      secret: "$(file:UTF-8:/secrets/clients/superset)"
+      webOrigins:
+        - https://superset.{{ .Values.domain }}
+    - clientId: jupyterhub
+      defaultClientScopes:
+        - web-origins
+        - acr
+        - roles
+        - profile
+        - groups
+        - basic
+        - email
+      name: jupyterhub
+      optionalClientScopes:
+        - address
+        - phone
+        - organization
+        - offline_access
+        - microprofile-jwt
+      redirectUris:
+        - https://jupyterhub.{{ .Values.domain }}/hub/oauth_callback
+      secret: "$(file:UTF-8:/secrets/clients/jupyterhub)"
+      webOrigins:
+        - https://jupyterhub.{{ .Values.domain }}
+    - clientId: trino
+      defaultClientScopes:
+        - web-origins
+        - acr
+        - roles
+        - profile
+        - groups
+        - basic
+        - email
+      name: trino
+      optionalClientScopes:
+        - address
+        - phone
+        - organization
+        - offline_access
+        - microprofile-jwt
+      redirectUris:
+        - https://trino.{{ .Values.domain }}/oauth2callback
+      secret: "$(file:UTF-8:/secrets/clients/trino)"
+      webOrigins:
+        - https://trino.{{ .Values.domain }}
+    - clientId: spark-history
+      defaultClientScopes:
+        - web-origins
+        - acr
+        - roles
+        - profile
+        - groups
+        - basic
+        - email
+      name: spark-history
+      optionalClientScopes:
+        - address
+        - phone
+        - organization
+        - offline_access
+        - microprofile-jwt
+      redirectUris:
+        - https://spark-history.{{ .Values.domain }}/oauth2/callback
+      secret: "$(file:UTF-8:/secrets/clients/spark-history)"
+      webOrigins:
+        - https://spark-history.{{ .Values.domain }}
+    - clientId: superset-trino
+      defaultClientScopes:
+        - web-origins
+        - acr
+        - roles
+        - profile
+        - groups
+        - basic
+        - email
+      name: superset-trino
+      optionalClientScopes:
+        - address
+        - phone
+        - organization
+        - offline_access
+        - microprofile-jwt
+      redirectUris: []
+      secret: "$(file:UTF-8:/secrets/clients/superset-trino)"
+      webOrigins: []
+    - clientId: polaris
+      defaultClientScopes:
+        - web-origins
+        - acr
+        - roles
+        - profile
+        - groups
+        - basic
+        - email
+      directAccessGrantsEnabled: false
+      implicitFlowEnabled: false
+      name: polaris
+      optionalClientScopes:
+        - address
+        - phone
+        - organization
+        - offline_access
+        - microprofile-jwt
+      redirectUris: []
+      secret: "$(file:UTF-8:/secrets/clients/polaris)"
+      serviceAccountsEnabled: true
+      standardFlowEnabled: false
+      webOrigins: []
+    - clientId: airflow
+      defaultClientScopes:
+        - web-origins
+        - acr
+        - roles
+        - profile
+        - groups
+        - basic
+        - email
+      name: airflow
+      optionalClientScopes:
+        - address
+        - phone
+        - organization
+        - offline_access
+        - microprofile-jwt
+      redirectUris:
+        - https://airflow.{{ .Values.domain }}/oauth-authorized/keycloak
+      secret: "$(file:UTF-8:/secrets/clients/airflow)"
+      webOrigins:
+        - https://airflow.{{ .Values.domain }}
+    - clientId: svc-trino-polaris-writer
+      defaultClientScopes:
+        - groups
+        - roles
+        - profile
+        - email
+      directAccessGrantsEnabled: false
+      implicitFlowEnabled: false
+      name: svc-trino-polaris-writer
+      redirectUris: []
+      secret: "$(file:UTF-8:/secrets/clients/svc-trino-polaris-writer)"
+      serviceAccountsEnabled: true
+      standardFlowEnabled: false
+      webOrigins: []
+    - clientId: svc-trino-examples-writer
+      defaultClientScopes:
+        - groups
+        - roles
+        - profile
+        - email
+      directAccessGrantsEnabled: false
+      implicitFlowEnabled: false
+      name: svc-trino-examples-writer
+      redirectUris: []
+      secret: "$(file:UTF-8:/secrets/clients/svc-trino-examples-writer)"
+      serviceAccountsEnabled: true
+      standardFlowEnabled: false
+      webOrigins: []
+    - clientId: svc-polaris-api-admin
+      defaultClientScopes:
+        - groups
+        - roles
+        - profile
+        - email
+      directAccessGrantsEnabled: false
+      implicitFlowEnabled: false
+      name: svc-polaris-api-admin
+      redirectUris: []
+      secret: "$(file:UTF-8:/secrets/clients/svc-polaris-api-admin)"
+      serviceAccountsEnabled: true
+      standardFlowEnabled: false
+      webOrigins: []
+    - clientId: svc-spark-etl-polaris-writer
+      defaultClientScopes:
+        - groups
+        - roles
+        - profile
+        - email
+      directAccessGrantsEnabled: false
+      implicitFlowEnabled: false
+      name: svc-spark-etl-polaris-writer
+      redirectUris: []
+      secret: "$(file:UTF-8:/secrets/clients/svc-spark-etl-polaris-writer)"
+      serviceAccountsEnabled: true
+      standardFlowEnabled: false
+      webOrigins: []
+    # The console's user and group management (its service account) and the
+    # requester of the SQL editor's token exchange (the header, token exchange).
+    - clientId: okdp-control-plane
+      attributes:
+        standard.token.exchange.enabled: "true"
+      defaultClientScopes:
+        - web-origins
+        - acr
+        - roles
+        - profile
+        - groups
+        - basic
+        - email
+        - trino-audience
+      directAccessGrantsEnabled: false
+      implicitFlowEnabled: false
+      name: okdp-control-plane
+      redirectUris: []
+      secret: "$(file:UTF-8:/secrets/clients/okdp-control-plane)"
+      serviceAccountsEnabled: true
+      standardFlowEnabled: false
+      webOrigins: []
+  clientScopes:
+    - name: groups
+      attributes:
+        display.on.consent.screen: "true"
+        include.in.token.scope: "false"
+      description: Groups scope
+      id: groups-scope-id
+      protocol: openid-connect
+      protocolMappers:
+        - config:
+            access.token.claim: "true"
+            claim.name: groups
+            id.token.claim: "true"
+            introspection.token.claim: "true"
+            jsonType.label: String
+            lightweight.claim: "true"
+            multivalued: "true"
+            userinfo.token.claim: "true"
+          consentRequired: false
+          id: roles_map_to_groups-mapper-id
+          name: roles_map_to_groups
+          protocol: openid-connect
+          protocolMapper: oidc-usermodel-realm-role-mapper
+        # The groups by name, added to the same claim (both multivalued).
+        - config:
+            access.token.claim: "true"
+            claim.name: groups
+            full.path: "false"
+            id.token.claim: "true"
+            introspection.token.claim: "true"
+            lightweight.claim: "true"
+            userinfo.token.claim: "true"
+          consentRequired: false
+          id: group_names-mapper-id
+          name: group_names
+          protocol: openid-connect
+          protocolMapper: oidc-group-membership-mapper
+    # The console's tokens name the client that exchanges them (the header,
+    # token exchange). Not a realm default.
+    - name: okdp-control-plane-audience
+      attributes:
+        display.on.consent.screen: "false"
+        include.in.token.scope: "false"
+      description: Audience okdp-control-plane, the exchange of the console's tokens
+      id: okdp-cp-audience-scope-id
+      protocol: openid-connect
+      protocolMappers:
+        - config:
+            access.token.claim: "true"
+            id.token.claim: "false"
+            included.client.audience: okdp-control-plane
+            introspection.token.claim: "true"
+            lightweight.claim: "false"
+          consentRequired: false
+          id: okdp-cp-audience-mapper-id
+          name: okdp-control-plane-audience
+          protocol: openid-connect
+          protocolMapper: oidc-audience-mapper
+    # The audience okdp-control-plane may request in the exchange, the value of
+    # the server's SQL_TOKEN_EXCHANGE_AUDIENCE. Not a realm default.
+    - name: trino-audience
+      attributes:
+        display.on.consent.screen: "false"
+        include.in.token.scope: "false"
+      description: Audience trino, the SQL editor's exchanged tokens
+      id: trino-audience-scope-id
+      protocol: openid-connect
+      protocolMappers:
+        - config:
+            access.token.claim: "true"
+            id.token.claim: "false"
+            included.client.audience: trino
+            introspection.token.claim: "true"
+            lightweight.claim: "false"
+          consentRequired: false
+          id: trino-audience-mapper-id
+          name: trino-audience
+          protocol: openid-connect
+          protocolMapper: oidc-audience-mapper
+  userProfile:
+    attributes:
+      - displayName: ${username}
+        multivalued: false
+        name: username
+        permissions:
+          edit:
+            - admin
+            - user
+          view:
+            - admin
+            - user
+        validations:
+          length:
+            max: 255
+            min: 3
+          up-username-not-idn-homograph: {}
+          username-prohibited-characters: {}
+      - displayName: ${email}
+        multivalued: false
+        name: email
+        permissions:
+          edit:
+            - admin
+            - user
+          view:
+            - admin
+            - user
+        validations:
+          email: {}
+          length:
+            max: 255
+      - displayName: ${firstName}
+        multivalued: false
+        name: firstName
+        permissions:
+          edit:
+            - admin
+            - user
+          view:
+            - admin
+            - user
+        validations:
+          length:
+            max: 255
+          person-name-prohibited-characters: {}
+      - displayName: ${lastName}
+        multivalued: false
+        name: lastName
+        permissions:
+          edit:
+            - admin
+            - user
+          view:
+            - admin
+            - user
+        validations:
+          length:
+            max: 255
+          person-name-prohibited-characters: {}
+      - displayName: comment
+        multivalued: false
+        name: comment
+        permissions:
+          edit:
+            - admin
+          view:
+            - admin
+      - displayName: uid
+        multivalued: false
+        name: uid
+        permissions:
+          edit:
+            - admin
+          view:
+            - admin
+    groups:
+      - displayDescription: Attributes, which refer to user metadata
+        displayHeader: User metadata
+        name: user-metadata

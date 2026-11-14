@@ -1,0 +1,363 @@
+#
+# Copyright 2026 The OKDP Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+#  Unless required by applicable law or agreed to in writing, software
+#  distributed under the License is distributed on an "AS IS" BASIS,
+#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#  See the License for the specific language governing permissions and
+#  limitations under the License.
+#
+
+# Keycloak, the platform's identity provider: a dependency of the platform, installed
+# with helm before anything compiled (bootstrap/README.md), from the upstream chart
+# keycloakx 7.3.2 (codecentric), with the sandbox's settings (Keycloak is a
+# prerequisite, not a package):
+#   bootstrap/keycloak/client-secrets.sh
+#   helm upgrade --install keycloak keycloakx --repo https://codecentric.github.io/helm-charts \
+#     --version 7.3.2 -n keycloak --wait --timeout 15m \
+#     -f bootstrap/keycloak/values.yaml -f bootstrap/keycloak/realm.yaml
+# after its database (database.yaml), the admin's password, Secret keycloak-admin
+# (key admin-password, a random value created once, bootstrap/README.md), and the
+# secrets of the realm's clients, Secret keycloak-client-secrets
+# (client-secrets.sh). The platform reaches it through
+# global.okdp.oidc of the platform values: the issuer
+# https://keycloak.<domain>/realms/okdp (the realm of realm.yaml, the applications'
+# and the people's; master is Keycloak's administrators' only, masterRealm below),
+# the console's client okdp-ui and the registration endpoint of the services'
+# clients; and through the platform's secret
+# store, the secrets of its clients, <namespace>/keycloak/<client> of each namespace
+# that reads it, where compiled instances read them (bootstrap/openbao/init.sh copies
+# them there, bootstrap/openbao/clients.yaml). Its
+# ingress and certificate come with the platform's ingress controller and cert-manager
+# (the bootstrap's ingress-nginx and cert-manager, installed before it, or the cluster's
+# own): the class and the cluster issuer named by global.okdp.ingress.className and
+# global.okdp.tls.clusterIssuer.
+
+# The domain of the hosts, global.okdp.ingress.suffix of the platform values: the
+# ingress, KC_HOSTNAME (the issuer) and the redirect URIs of the realm (realm.yaml).
+domain: okdp.sandbox
+# The admin console's URL, through kubectl port-forward only (bootstrap/README.md):
+# KC_HOSTNAME_ADMIN, and the frontend URL of the realm master (masterRealm), its
+# login and its issuer, so that neither is on the ingress (the paths of ingress).
+adminUrl: http://localhost:8080
+
+# The realm master, Keycloak's administrators' only (its admin, created at the first
+# start below): no application, no client of the platform, no user of it; applied by
+# keycloak-config-cli with the realm okdp (realm.yaml). A sandbox whose realm was
+# master before: the next import deletes from master the clients, roles, client
+# scopes and registration policies an import created there, not its users (the demo
+# users): delete them by hand, or reinstall Keycloak (bootstrap/README.md).
+masterRealm:
+  realm: master
+  enabled: true
+  displayName: Keycloak administration
+  attributes:
+    frontendUrl: "{{ .Values.adminUrl }}"
+  bruteForceProtected: true
+  permanentLockout: false
+  failureFactor: 10
+  waitIncrementSeconds: 60
+  maxFailureWaitSeconds: 900
+
+fullnameOverride: keycloak
+# Labels app.kubernetes.io/name: keycloak (the chart's name is keycloakx).
+nameOverride: keycloak
+# The official image in production mode (kc.sh start): plain HTTP behind the ingress,
+# which terminates TLS and sets the X-Forwarded-* headers; the hostname fixes the
+# issuer URL, the realms at the root of the host.
+image:
+  repository: quay.io/keycloak/keycloak
+  # By digest (scripts/bump-bootstrap.sh).
+  tag: "26.7.4"
+  digest: sha256:82a77884f3af238beab1e7afd63b5f530e1b5c0590bd7aa60b40a40463e29b2c
+command: ["/opt/keycloak/bin/kc.sh"]
+args: ["start"]
+http:
+  relativePath: /
+proxy:
+  enabled: true
+  mode: xforwarded
+  http:
+    enabled: true
+# One replica with a local cache (the chart's default is a JDBC-ping cluster).
+cache:
+  stack: custom
+# Readiness and liveness probes on the management port (9000); /metrics stays inside
+# the cluster (the ingress serves port 8080 only).
+health:
+  enabled: true
+metrics:
+  enabled: true
+serviceAccount:
+  automountServiceAccountToken: false
+podSecurityContext:
+  fsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
+securityContext:
+  runAsUser: 1000
+  runAsNonRoot: true
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+# The admin of the master realm (created at the first start, also keycloak-config-cli's
+# account), its password from the Secret keycloak-admin (key admin-password), random,
+# created before the release (bootstrap/README.md), never a value of this file: the
+# release does not own it; the database, the CloudNativePG cluster keycloak-db
+# (database.yaml), its owner's Secret keycloak-db-app.
+extraEnv: |
+  - name: KC_HOSTNAME
+    value: "https://keycloak.{{ .Values.domain }}"
+  - name: KC_HOSTNAME_ADMIN
+    value: "{{ .Values.adminUrl }}"
+  - name: KC_CACHE
+    value: local
+  - name: KC_BOOTSTRAP_ADMIN_USERNAME
+    value: admin
+  - name: KC_BOOTSTRAP_ADMIN_PASSWORD
+    valueFrom:
+      secretKeyRef:
+        name: keycloak-admin
+        key: admin-password
+  - name: KC_DB
+    value: postgres
+  - name: KC_DB_URL_HOST
+    valueFrom:
+      secretKeyRef:
+        name: keycloak-db-app
+        key: host
+  - name: KC_DB_URL_PORT
+    valueFrom:
+      secretKeyRef:
+        name: keycloak-db-app
+        key: port
+  - name: KC_DB_URL_DATABASE
+    valueFrom:
+      secretKeyRef:
+        name: keycloak-db-app
+        key: dbname
+  - name: KC_DB_USERNAME
+    valueFrom:
+      secretKeyRef:
+        name: keycloak-db-app
+        key: username
+  - name: KC_DB_PASSWORD
+    valueFrom:
+      secretKeyRef:
+        name: keycloak-db-app
+        key: password
+resources:
+  requests:
+    cpu: 500m
+    memory: 2Gi
+  limits:
+    cpu: "1"
+    memory: 4Gi
+# https://keycloak.<domain>: the class and the issuer of the platform values
+# (global.okdp.ingress.className, global.okdp.tls.clusterIssuer). Its paths, what
+# the browsers and the in-cluster clients need, Keycloak's recommendations: the
+# realm okdp (its logins, tokens, account console, client registration), the
+# static resources, and the admin API of the realm okdp, the console's user and
+# group management (okdp-control-plane-server, as the realm's client
+# okdp-control-plane: its KEYCLOAK_URL is the issuer's). Not the admin console nor
+# the realm master (adminUrl, kubectl port-forward), nor the admin API of another
+# realm, nor / (the welcome page).
+ingress:
+  enabled: true
+  ingressClassName: nginx
+  annotations:
+    cert-manager.io/cluster-issuer: default-issuer
+    nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+  rules:
+    - host: "keycloak.{{ .Values.domain }}"
+      paths:
+        - path: /realms/okdp
+          pathType: Prefix
+        - path: /resources
+          pathType: Prefix
+        - path: /admin/realms/okdp
+          pathType: Prefix
+        - path: /robots.txt
+          pathType: Exact
+  tls:
+    - hosts:
+        - "keycloak.{{ .Values.domain }}"
+      secretName: "keycloak.{{ .Values.domain }}-tls"
+# Secrets keycloak-<name> (not keycloak-admin, created before the release).
+secrets:
+  # The realm files keycloak-config-cli applies: the realm okdp of realm.yaml, its
+  # {{ .Values.domain }} rendered, and master (masterRealm). A Secret, not a
+  # ConfigMap: it holds the demo users' passwords (the clients' secrets are not in it,
+  # but read by keycloak-config-cli from Secret keycloak-client-secrets, below).
+  realm:
+    stringData:
+      master.yaml: "{{ tpl (toYaml .Values.masterRealm) $ }}"
+      realm.yaml: "{{ tpl (toYaml .Values.realm) $ }}"
+extraManifests:
+  # keycloak-config-cli (the upstream adorsys image, built for Keycloak 26) applies the
+  # realm files after every install and upgrade: a post-install/post-upgrade hook Job.
+  # It skips the import of a file that did not change (a checksum kept in its realm)
+  # and otherwise makes the realm match it. The clients' secrets are no values of the
+  # file: each is "$(file:UTF-8:/secrets/clients/<client>)", which its variable
+  # substitution replaces with that file, the key <client> of Secret
+  # keycloak-client-secrets (client-secrets.sh, before the release) mounted at
+  # /secrets/clients; a missing one fails the import. The checksum is the substituted
+  # file's: a changed secret is imported. Its pod is not app.kubernetes.io/name
+  # keycloak: the Keycloak pods' anti-affinity leaves it alone on a single node.
+  # Keycloak's own client registration policies stay as it creates them (no init
+  # container removes Full Scope Disabled any more): the oidc-dcr Jobs register with
+  # initial access tokens (authenticated), anonymous registration is refused. The
+  # realm adds two on authenticated registration, its hosts and consent (realm.yaml,
+  # components).
+  - apiVersion: batch/v1
+    kind: Job
+    metadata:
+      name: keycloak-config-cli
+      labels:
+        app.kubernetes.io/name: keycloak-config-cli
+        app.kubernetes.io/instance: "{{ .Release.Name }}"
+        app.kubernetes.io/component: keycloak-config-cli
+      annotations:
+        helm.sh/hook: post-install,post-upgrade
+        helm.sh/hook-delete-policy: hook-succeeded,before-hook-creation
+        helm.sh/hook-weight: "5"
+    spec:
+      backoffLimit: 3
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: keycloak-config-cli
+            app.kubernetes.io/instance: "{{ .Release.Name }}"
+            app.kubernetes.io/component: keycloak-config-cli
+          annotations:
+            checksum/realm: "{{ list .Values.realm .Values.masterRealm | toYaml | sha256sum }}"
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1001
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: keycloak-config-cli
+              image: quay.io/adorsys/keycloak-config-cli:6.5.1-26.5.5@sha256:0955d98c8a341898b7aa177477edf8a1e90569ae50bbe7598141c1270b773274
+              imagePullPolicy: IfNotPresent
+              env:
+                - name: KEYCLOAK_URL
+                  value: "http://keycloak-http.{{ .Release.Namespace }}.svc.cluster.local/"
+                - name: KEYCLOAK_USER
+                  value: admin
+                - name: KEYCLOAK_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: keycloak-admin
+                      key: admin-password
+                - name: KEYCLOAK_AVAILABILITYCHECK_ENABLED
+                  value: "true"
+                - name: KEYCLOAK_AVAILABILITYCHECK_TIMEOUT
+                  value: 300s
+                - name: IMPORT_FILES_LOCATIONS
+                  value: /config/*
+                - name: IMPORT_VARSUBSTITUTION_ENABLED
+                  value: "true"
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+              resources:
+                requests:
+                  cpu: 250m
+                  memory: 512Mi
+                limits:
+                  cpu: "1"
+                  memory: 768Mi
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+                - name: config
+                  mountPath: /config
+                  readOnly: true
+                - name: client-secrets
+                  mountPath: /secrets/clients
+                  readOnly: true
+          volumes:
+            - name: tmp
+              emptyDir: {}
+            - name: config
+              secret:
+                secretName: keycloak-realm
+            - name: client-secrets
+              secret:
+                secretName: keycloak-client-secrets
+  # The network (bootstrap/README.md, Network policies): from another namespace,
+  # only the ingress controller reaches Keycloak, on its HTTP port (8080), the
+  # in-cluster clients too (the CoreDNS patch answers keycloak.<domain> with the
+  # controller's Service); the management port (9000: health, metrics) and the
+  # database stay inside the namespace, but for the CloudNativePG operator's
+  # calls to its instance (8000, 5432). The paths it serves are the ingress' (L7, the
+  # paths of ingress above), not a NetworkPolicy's.
+  - apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata:
+      name: default-deny-ingress
+    spec:
+      podSelector: {}
+      policyTypes: [Ingress]
+  - apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata:
+      name: same-namespace
+    spec:
+      podSelector: {}
+      policyTypes: [Ingress]
+      ingress:
+        - from:
+            - podSelector: {}
+  - apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata:
+      name: keycloak-from-ingress
+    spec:
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: keycloak
+          app.kubernetes.io/instance: "{{ .Release.Name }}"
+      policyTypes: [Ingress]
+      ingress:
+        - from:
+            - namespaceSelector:
+                matchLabels:
+                  kubernetes.io/metadata.name: ingress-nginx
+              podSelector:
+                matchLabels:
+                  app.kubernetes.io/name: ingress-nginx
+          ports:
+            - {protocol: TCP, port: 8080}
+  - apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata:
+      name: keycloak-db-from-cnpg
+    spec:
+      podSelector:
+        matchLabels:
+          cnpg.io/cluster: keycloak-db
+      policyTypes: [Ingress]
+      ingress:
+        - from:
+            - namespaceSelector:
+                matchLabels:
+                  kubernetes.io/metadata.name: cnpg-system
+          ports:
+            - {protocol: TCP, port: 8000}
+            - {protocol: TCP, port: 5432}

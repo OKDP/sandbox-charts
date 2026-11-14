@@ -1,0 +1,40 @@
+#
+# Copyright 2026 The OKDP Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+#  Unless required by applicable law or agreed to in writing, software
+#  distributed under the License is distributed on an "AS IS" BASIS,
+#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#  See the License for the specific language governing permissions and
+#  limitations under the License.
+#
+
+# Keycloak's database: a PostgreSQL cluster of the CloudNativePG operator of the
+# bootstrap, in Keycloak's namespace, applied before Keycloak (bootstrap/README.md):
+#   kubectl create namespace keycloak
+#   kubectl apply -f bootstrap/keycloak/database.yaml
+#   kubectl -n keycloak wait clusters.postgresql.cnpg.io/keycloak-db --for=condition=Ready --timeout=10m
+# Not a claim: Keycloak is a dependency of the platform, installed before anything
+# compiled, the platform's database server among them. The operator creates the
+# database keycloak, its owner keycloak and the owner's credentials, Secret
+# keycloak-db-app (keys username, password, host, port, dbname), which Keycloak reads
+# (values.yaml, extraEnv).
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: keycloak-db
+  namespace: keycloak
+spec:
+  instances: 1
+  imageName: ghcr.io/cloudnative-pg/postgresql:18.3@sha256:5e30290fba3d990b08a9caea6ddb49c661ad8246cbb2688adad7e6cc78df6c3f
+  storage:
+    size: 2Gi
+  bootstrap:
+    initdb:
+      database: keycloak
+      owner: keycloak
