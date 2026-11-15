@@ -1,0 +1,65 @@
+{{- with .Values.networkPolicy }}{{ if .enabled }}
+# The pod's egress, its jobs' too (values.yaml, networkPolicy).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $.Release.Name }}
+  labels:
+    app.kubernetes.io/name: forgejo-runner
+    app.kubernetes.io/instance: {{ $.Release.Name }}
+    app.kubernetes.io/part-of: okdp-sandbox
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: forgejo-runner
+      app.kubernetes.io/instance: {{ $.Release.Name }}
+  policyTypes: [Ingress, Egress]
+  egress:
+    # The cluster's DNS (the daemon's too: okdp-registry is a name of the kind
+    # network, which CoreDNS forwards to the node's resolver).
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+    # Forgejo, by its Service (forgejoUrl).
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: forgejo
+      ports:
+        - {protocol: TCP, port: 3000}
+    # Forgejo by its ingress (https://forgejo.<suffix>), the CI's URLs.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .ingress.namespace }}
+          podSelector:
+            matchLabels: {{ toJson .ingress.podLabels }}
+      ports:
+        - {protocol: TCP, port: {{ .ingress.port }}}
+    {{- range .registries }}
+    - to:
+        - ipBlock:
+            cidr: {{ .cidr }}
+      ports:
+        - {protocol: TCP, port: {{ .port }}}
+    {{- end }}
+    # The internet: the chart repositories, the catalogs, the image registries.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: {{ toJson .internetExcept }}
+      ports:
+        {{- range .internetPorts }}
+        - {protocol: TCP, port: {{ . }}}
+        {{- end }}
+    {{- with .extraEgress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}{{ end }}

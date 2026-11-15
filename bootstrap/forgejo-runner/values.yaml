@@ -1,0 +1,113 @@
+# The CI of the deployments: a Forgejo Actions runner of the bootstrap's Forgejo, a
+# dependency of the platform installed with helm after it (bootstrap/README.md), from
+# the chart of this directory:
+#   helm upgrade --install forgejo-runner bootstrap/forgejo-runner -n forgejo \
+#     -f bootstrap/forgejo-runner/values.yaml
+# It runs the only workflow, the one okdp-gitops writes in the output repository
+# (.forgejo/workflows/okdp-gitops.yaml, okdp-gitops workflow --for output): on its
+# schedule, okdp-gitops compile of the sources when they moved, the compiled tree
+# pushed to the output repository, which the engines deploy; the repositories of the
+# sources hold no workflow and no secret. Each job is a new container of the
+# okdp-gitops image, run by the pod's own Docker daemon (docker-in-docker,
+# rootless: no root, no privileged container, the pod in a user namespace of its
+# own; what it still needs of the node, which keeps the namespace forgejo
+# privileged, is in templates/runner.yaml and bootstrap/README.md), its topology
+# the workflow's, its git token the output repository's Actions secret
+# OKDP_GITOPS_TOKEN (sent over https:// to Forgejo's ingress, the platform's CA bundle
+# mounted in the job, caBundle below; no GITOPS_INSECURE_HTTP_HOSTS by default).
+# okdp-sandbox's scripts/configure.sh --push
+# writes that secret, registers the runner for the output repository only (never a
+# repository of the sources nor the organization), puts the workflow in it and
+# restarts the runner: it writes the registration secret in the Secret
+# registrationSecret.name of this namespace only, never in Git, under the output
+# repository's name, random. The runner's pod starts once that Secret exists. The
+# runner holds no other credentials.
+
+# The Forgejo it registers with: the bootstrap's, by its Service.
+forgejoUrl: http://forgejo-http.forgejo.svc.cluster.local:3000
+# The offline registration secret, a key of the repository it is registered for, the
+# output repository (okdp-sandbox's scripts/configure.sh --push).
+registrationSecret:
+  name: okdp-runner-registration
+# The okdp-gitops image of the jobs, the one that receives the output repository's
+# write token, so named by its digest: none is published yet (TODO(okdp-gitops)), so it
+# is the sandbox's own build, pushed to the registry okdp-registry of the kind network
+# (okdp-sandbox's README, step 2; okdp-sandbox's scripts/e2e-kind.sh sets it,
+# E2E_GITOPS_IMAGE), never a registry reached over plain HTTP outside the machine.
+# digest is required: the chart refuses to render without one (a tag is mutable, and a
+# tenant pod that reaches the registry could push its own image under it); the label
+# is repository[:tag]@digest. After docker push, the digest is
+#   docker inspect --format '{{index .RepoDigests 0}}' <image>   (the part after @)
+# Another registry: set it here, and in insecureRegistries only when it serves plain
+# HTTP on the kind network.
+okdpGitopsImage:
+  repository: okdp-registry:5000/okdp-gitops
+  tag: dev
+  digest: ""
+# Registries, <host>[:<port>], the Docker daemon pulls from over plain HTTP or without
+# verifying their certificate (dockerd --insecure-registry): the sandbox's own,
+# okdp-registry, a container of the kind network (as the node's containerd is told,
+# okdp-sandbox's README, step 2), reached by the runner's egress (networkPolicy,
+# registries).
+insecureRegistries: [okdp-registry:5000]
+# The platform's CA bundle, for the jobs: the Secret of the namespace (trust-manager's
+# Bundle certs-bundle, the public CAs and the sandbox's own) mounted read-only at path
+# in the Docker daemon's container, the only directory but the chart cache a job may mount
+# (container.valid_volumes). The workflow of okdp-gitops mounts it in the job and sets
+# SSL_CERT_FILE to path/key (okdp-gitops workflow, GITOPS_RUNNER_CA_FILE), so that
+# the jobs reach https://forgejo.okdp.sandbox and the token crosses no network in clear.
+caBundle:
+  secretName: certs-bundle
+  key: ca.crt
+  path: /etc/okdp/ca
+# The Docker daemon's networks (dockerd --default-address-pool), the jobs' among them,
+# off the kind network (172.18.0.0/16, the daemon's first pool by default), kind's
+# pods and services and slirp4netns' 10.0.2.0/24: an address of the cluster or of
+# the kind network (okdp-registry) a job reaches would otherwise be one of its own
+# bridge.
+addressPools: [{base: 10.250.0.0/16, size: 24}]
+# Jobs the runner runs at once. Every compile pushes to the output repository: above 1,
+# two compiles can race and one push be refused.
+capacity: 1
+# The proxy of the jobs and of the daemon's pulls (okdp-sandbox's README, Proxy):
+# HTTPS_PROXY, HTTP_PROXY, NO_PROXY.
+proxy: {}
+# The pod's egress (a NetworkPolicy; bootstrap/README.md, Network policies), the
+# jobs' too (their containers' traffic leaves the pod's own address): the
+# cluster's DNS, Forgejo's HTTP port, the registries below, and the internet on
+# internetPorts, the private ranges excepted (internetExcept: the pods, the
+# Services, the nodes and the kind network), so no other service of the cluster
+# (OpenBao, Keycloak, RustFS, the API server). Ingress: none (the namespace's
+# default deny, bootstrap/forgejo/values.yaml).
+#   registries   the registries of a private range the daemon pulls from, a CIDR
+#                and a port each: the sandbox's okdp-registry:5000, a container
+#                of the kind network (172.18.0.0/16 by default: docker network
+#                inspect kind)
+#   extraEgress  NetworkPolicy egress rules of your own (a proxy of the private
+#                ranges, proxy above)
+networkPolicy:
+  enabled: true
+  registries:
+    - {cidr: 172.18.0.0/16, port: 5000}
+  # Forgejo by its ingress, https://forgejo.okdp.sandbox (CoreDNS answers the ingress
+  # controller's Service for *.okdp.sandbox, bootstrap/coredns): the controller's pods,
+  # on 443, which the jobs' URLs name.
+  ingress:
+    namespace: ingress-nginx
+    podLabels: {app.kubernetes.io/name: ingress-nginx, app.kubernetes.io/component: controller}
+    port: 443
+  internetPorts: [443]
+  internetExcept: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 169.254.0.0/16]
+  extraEgress: []
+# Resources of the Docker daemon's container, where the jobs' containers run.
+resources: {}
+# The runner and its Docker daemon (the rootless variant, dind-rootless: its user
+# rootless, 1000, rootlesskit, slirp4netns), by tag and digest (the image index of
+# the tag, docker buildx imagetools inspect): a tag moved upstream pulls nothing
+# else.
+image:
+  repository: code.forgejo.org/forgejo/runner
+  tag: 13.2.0@sha256:ca3d5eea46004789a175d1369eec6829d3ea9bfbe2011a06625b4bdaa55f7552
+dindImage:
+  repository: docker.io/library/docker
+  tag: 29.9.1-dind-rootless@sha256:825e451c9bd898245ca8fb07bd9a48999ccf33c0192fd68594c73aed7b67d11f

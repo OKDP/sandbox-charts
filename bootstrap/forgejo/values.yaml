@@ -1,0 +1,159 @@
+# Forgejo, the Git server of the sandbox: a dependency of the platform, installed with
+# helm before anything compiled (bootstrap/README.md), from the upstream chart
+# oci://code.forgejo.org/forgejo-helm/forgejo 17.1.7:
+#   helm upgrade --install forgejo oci://code.forgejo.org/forgejo-helm/forgejo@sha256:f5044e73361f5991978f1bc281a570bf893fd0f468e7d76274a7853eb27428cf \
+#     -n forgejo --create-namespace --wait -f bootstrap/forgejo/values.yaml
+# The Git repositories of the sandbox, in the organization okdp: the deployments
+# repositories of the topology (io: okdp/okdp-platform, okdp/okdp-projects and
+# okdp/okdp-output; split: okdp/okdp-platform, okdp/okdp-project-<p> and
+# okdp/okdp-output), the compiled tree in the output repository only, and the
+# service catalogs (okdp/platform-charts, okdp/sandbox-charts, okdp/community-charts),
+# at http://forgejo-http.forgejo.svc.cluster.local:3000/okdp/<repository>.git.
+# okdp-sandbox's scripts/configure.sh --push creates the organization and the
+# repositories (private) and pushes them, compiled; Flux or Argo CD read the output
+# repository. It creates three accounts, none an admin, each with the teams of the
+# repositories it needs only, their tokens in Secrets of the namespaces that use them,
+# no password kept: okdp-ci, the CI, the only account the output repository's main
+# takes a push of, its token the output repository's Actions secret
+# OKDP_GITOPS_TOKEN; okdp-reader, the engines', reads the output repository only;
+# okdp-console, the control plane's, writes the repositories of the sources only.
+# People push with their own accounts, signed in through Keycloak. Not compiled, not
+# managed by the engine: upgrade it with the same command. Web UI:
+# https://forgejo.okdp.sandbox, through the bootstrap's ingress-nginx and
+# cert-manager.
+fullnameOverride: forgejo
+# By digest (scripts/bump-bootstrap.sh): the rootless image of the chart's appVersion,
+# the digest of the tag 15.0.9-rootless.
+image:
+  digest: sha256:caf1bca332f95cdcf124227a4bfa3b49bbbfbbc8a5e4a97406921cb581165413
+test: {enabled: false}
+persistence:
+  enabled: true
+  size: 2Gi
+  claimName: forgejo-data
+# The chart keeps the gitea key for the Forgejo settings.
+gitea:
+  # The admin account: keys username and password of this Secret of the namespace,
+  # created before Forgejo with a random password (bootstrap/README.md), never
+  # committed. The chart sets that password on the account at each start (passwordMode
+  # keepUpdated). The admin is not named okdp: a user and an organization cannot share
+  # a name.
+  admin:
+    existingSecret: okdp-forgejo-admin
+    email: okdp@okdp.io
+  # Sign-in with Keycloak (the realm's client forgejo, bootstrap/keycloak): its OAuth
+  # source is created once the platform is up (okdp-sandbox's README, after step 5;
+  # okdp-sandbox's scripts/e2e-kind.sh), not here (gitea.oauth): the chart creates or
+  # updates it in an init container at every start, which then needs Keycloak
+  # reachable through the ingress and its CA trusted (neither exists at the
+  # bootstrap). A user is created at the first sign-in; okdp-admin stays a local
+  # account (okdp-sandbox's scripts/configure.sh --push), and so do okdp-ci,
+  # okdp-reader and okdp-console, which sign in with tokens only.
+  config:
+    database: {DB_TYPE: sqlite3}
+    session: {PROVIDER: memory}
+    cache: {ADAPTER: memory}
+    queue: {TYPE: level}
+    server:
+      ROOT_URL: https://forgejo.okdp.sandbox/
+    repository:
+      # A push to a missing repository of the organization creates it, private.
+      ENABLE_PUSH_CREATE_ORG: true
+      DEFAULT_PUSH_CREATE_PRIVATE: true
+    # No local sign-up: accounts come from Keycloak.
+    service:
+      ALLOW_ONLY_EXTERNAL_REGISTRATION: true
+    oauth2_client:
+      ENABLE_AUTO_REGISTRATION: true
+    # Forgejo Actions: the CI, the workflow .forgejo/workflows/okdp-gitops.yaml of the
+    # output repository, the only one (the repositories of the sources hold none),
+    # run by the bootstrap's forgejo-runner (registered for the output repository by
+    # okdp-sandbox's scripts/configure.sh --push), on a schedule (cron */2 * * * *)
+    # and on dispatch, never on a push.
+    actions:
+      ENABLED: true
+    # The cron task that starts the scheduled workflows (on: schedule): it is on by
+    # default once Actions is, set here because the CI depends on it; it checks the
+    # schedules every minute.
+    cron.start_schedule_tasks:
+      ENABLED: true
+      SCHEDULE: "@every 1m"
+# Trust of the sandbox CA for the calls to Keycloak: the platform's CA bundle, the
+# Secret global.okdp.tls.caBundleSecret of the platform values names (certs-bundle,
+# key ca.crt: the bootstrap's trust bundle, bootstrap/trust-manager/bundle.yaml, or a
+# cluster's own trust distribution), next to the system CAs (SSL_CERT_DIR). Optional:
+# trust-manager writes it to the namespace forgejo when helm creates it, possibly after
+# Forgejo's pod started; Forgejo reads it at startup, so it is restarted once the
+# platform is up (okdp-sandbox's README, after step 5). The chart sets
+# deployment.env on the init containers too, the mount is the main container's only:
+# they make no call to Keycloak.
+deployment:
+  env:
+    - name: SSL_CERT_DIR
+      value: /etc/okdp-ca
+extraVolumes:
+  - name: ca-bundle
+    secret:
+      secretName: certs-bundle
+      optional: true
+      items:
+        - key: ca.crt
+          path: ca.crt
+extraContainerVolumeMounts:
+  - name: ca-bundle
+    mountPath: /etc/okdp-ca
+    readOnly: true
+# https://forgejo.okdp.sandbox: the ingress class and the cluster issuer of the platform
+# values (global.okdp.ingress.className, global.okdp.tls.clusterIssuer).
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    cert-manager.io/cluster-issuer: default-issuer
+    # The CI pushes the output over this Ingress (CI_FORGEJO_URL), the charts vendored in
+    # it (charts/*.tgz) with it: nginx's default of 1m would refuse the push (413).
+    nginx.ingress.kubernetes.io/proxy-body-size: 512m
+  hosts:
+    - host: forgejo.okdp.sandbox
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: forgejo-tls
+      hosts: [forgejo.okdp.sandbox]
+# The network (bootstrap/README.md, Network policies): Forgejo's HTTP port (3000)
+# from the ingress controller, the engines (Argo CD's argocd, Flux's flux-system),
+# the console (okdp-system) and the CI runner of this namespace; its SSH port from
+# nothing (git goes over HTTP). Another namespace of an engine or of the
+# console: add it to the list. The runner's own egress is its chart's
+# (bootstrap/forgejo-runner).
+extraDeploy:
+  - apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata:
+      name: default-deny-ingress
+    spec:
+      podSelector: {}
+      policyTypes: [Ingress]
+  - apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata:
+      name: forgejo-http
+    spec:
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: forgejo
+          app.kubernetes.io/instance: "{{ .Release.Name }}"
+      policyTypes: [Ingress]
+      ingress:
+        - from:
+            - namespaceSelector:
+                matchExpressions:
+                  - key: kubernetes.io/metadata.name
+                    operator: In
+                    values: [ingress-nginx, argocd, flux-system, okdp-system]
+            - podSelector:
+                matchLabels:
+                  app.kubernetes.io/name: forgejo-runner
+          ports:
+            - {protocol: TCP, port: 3000}

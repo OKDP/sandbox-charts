@@ -1,0 +1,245 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Release.Name }}
+  labels:
+    app.kubernetes.io/name: forgejo-runner
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/part-of: okdp-sandbox
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}
+  labels:
+    app.kubernetes.io/name: forgejo-runner
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/part-of: okdp-sandbox
+data:
+  # The jobs: a new container of the okdp-gitops image each (label okdp-gitops, by
+  # digest: force_pull stays false, the digest makes a pulled image the right one), on
+  # the pod's rootless Docker daemon, unprivileged, the chart cache volume okdp-charts the only
+  # volume and the directory of the platform's CA bundle (read-only, caBundle) the only ones a
+  # job may mount, the proxy in their environment.
+  config.yml: |
+    cache:
+      enabled: false
+    container:
+      docker_host: '-'
+      force_pull: false
+      network: ""
+      privileged: false
+      valid_volumes:
+      - okdp-charts
+      - {{ .Values.caBundle.path }}
+    runner:
+      capacity: {{ .Values.capacity }}
+      envs: {{ .Values.proxy | toJson }}
+      labels:
+      - okdp-gitops:docker://{{ include "forgejo-runner.okdpGitopsImage" . }}
+      shutdown_timeout: 2m
+      timeout: 1h
+  start.sh: |
+{{ .Files.Get "scripts/start.sh" | indent 4 }}
+  # The subordinate IDs of the rootless daemon's user (rootless, 1000): its user
+  # namespace maps its root to 1000 and these to the jobs' other users, every ID of
+  # the pod's user namespace (0-65535) but 0 (newuidmap would need CAP_SETFCAP to
+  # map it) and 1000, so that 1-65534 (the okdp-gitops image's 65534, nobody) are
+  # users of a job. The image's own range, 100000-165535, is outside the pod's.
+  subids: |
+    rootless:1:999
+    rootless:1001:64535
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}
+  labels:
+    app.kubernetes.io/name: forgejo-runner
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/part-of: okdp-sandbox
+spec:
+  replicas: 1
+  # One runner at a time: two would take the same jobs.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: forgejo-runner
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ printf "%s%s" (toJson .Values) (.Files.Get "scripts/start.sh") | sha256sum }}
+      labels:
+        app.kubernetes.io/name: forgejo-runner
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      # A user namespace of the pod's own (Kubernetes 1.33 or later; kind's 1.37):
+      # its IDs 0-65535 are unprivileged IDs of the node, its root no root of the
+      # node. The daemon's /proc unmasked needs it (procMount: Unmasked).
+      hostUsers: false
+      serviceAccountName: {{ .Release.Name }}
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      # The runner image runs as 1000:1000 (HOME /data).
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      # A job's container finishing its push before the runner stops.
+      terminationGracePeriodSeconds: 150
+      initContainers:
+        # The Docker daemon of the jobs, a sidecar (restartPolicy: Always), rootless
+        # (dockerd-rootless: the image's user rootless, 1000, in a user namespace of
+        # its own, nested in the pod's, its network slirp4netns', user-mode, out of
+        # the pod's address; no root, no privileged container), on a Unix socket
+        # only (no TCP listener, no TLS); its networks from addressPools. What it
+        # needs of the node, none of which baseline allows (the namespace forgejo is
+        # privileged, bootstrap/namespaces.yaml): seccomp Unconfined (the user
+        # namespaces of the daemon and of its containers: RuntimeDefault refuses
+        # unshare without CAP_SYS_ADMIN), /proc unmasked (its containers mount their
+        # own proc, which the kernel refuses under a masked one), /dev/net/tun of
+        # the node (slirp4netns' TAP device, a device runc allows every container),
+        # its privilege escalation (newuidmap and newgidmap, of file capabilities
+        # SETUID and SETGID, its only capabilities); AppArmor unconfined (a node
+        # with AppArmor: its default profile refuses mount).
+        - name: dind
+          image: {{ .Values.dindImage.repository }}:{{ .Values.dindImage.tag }}
+          imagePullPolicy: IfNotPresent
+          restartPolicy: Always
+          args:
+            - dockerd
+            - --host=unix:///run/dind/docker.sock
+            {{- range .Values.insecureRegistries }}
+            - --insecure-registry={{ . }}
+            {{- end }}
+            {{- range .Values.addressPools }}
+            - --default-address-pool=base={{ .base }},size={{ .size }}
+            {{- end }}
+          env:
+            - name: DOCKER_TLS_CERTDIR
+              value: ""
+            {{- range $k, $v := .Values.proxy }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            allowPrivilegeEscalation: true
+            capabilities:
+              drop: [ALL]
+              add: [SETUID, SETGID]
+            procMount: Unmasked
+            seccompProfile:
+              type: Unconfined
+            appArmorProfile:
+              type: Unconfined
+          # The chart cache, created writable by every user (sticky): the jobs run as
+          # the okdp-gitops image's user, and a new volume is the daemon's.
+          lifecycle:
+            postStart:
+              exec:
+                command:
+                  - /bin/sh
+                  - -c
+                  - for i in $(seq 60); do docker --host=unix:///run/dind/docker.sock version >/dev/null 2>&1 && break; sleep 1; done; docker --host=unix:///run/dind/docker.sock volume create okdp-charts >/dev/null && chmod 1777 /home/rootless/.local/share/docker/volumes/okdp-charts/_data
+          startupProbe:
+            exec:
+              command: [docker, --host=unix:///run/dind/docker.sock, version]
+            periodSeconds: 2
+            failureThreshold: 60
+          {{- with .Values.resources }}
+          resources: {{ toJson . }}
+          {{- end }}
+          volumeMounts:
+            - name: docker-socket
+              mountPath: /run/dind
+            # The data root's parent: dockerd creates docker/ in it, its own (the
+            # emptyDir is the pod's root's, writable by all: dockerd's chmod of a
+            # data root it does not own is refused).
+            - name: docker-data
+              mountPath: /home/rootless/.local/share
+            - name: config
+              mountPath: /etc/subuid
+              subPath: subids
+              readOnly: true
+            - name: config
+              mountPath: /etc/subgid
+              subPath: subids
+              readOnly: true
+            - name: tun
+              mountPath: /dev/net/tun
+            # The platform's CA bundle (public CAs and the sandbox's), which the jobs
+            # mount read-only (valid_volumes) and trust: the daemon sees its own
+            # container's file system.
+            - name: ca
+              mountPath: {{ .Values.caBundle.path }}
+              readOnly: true
+      containers:
+        - name: runner
+          image: {{ .Values.image.repository }}:{{ .Values.image.tag }}
+          imagePullPolicy: IfNotPresent
+          # dumb-init (the image's entrypoint) as PID 1.
+          command: [/usr/bin/dumb-init, --, /bin/bash, /etc/forgejo-runner/conf/start.sh]
+          args: [{{ .Values.forgejoUrl | quote }}]
+          env:
+            - name: DOCKER_HOST
+              value: unix:///run/dind/docker.sock
+            - name: REGISTRATION_SECRET
+              value: {{ .Values.registrationSecret.name | quote }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+            - name: config
+              mountPath: /etc/forgejo-runner/conf
+              readOnly: true
+            - name: registration
+              mountPath: /etc/forgejo-runner/registration
+              readOnly: true
+            - name: docker-socket
+              mountPath: /run/dind
+      volumes:
+        - name: config
+          configMap:
+            name: {{ .Release.Name }}
+        # Written by okdp-sandbox's scripts/configure.sh --push: the pod waits for it.
+        - name: registration
+          secret:
+            secretName: {{ .Values.registrationSecret.name }}
+            defaultMode: 0440
+        # The platform's CA bundle, a Secret of every namespace (trust-manager, installed
+        # before: the pod waits for it), key ca.crt.
+        - name: ca
+          secret:
+            secretName: {{ .Values.caBundle.secretName }}
+            items:
+              - {key: {{ .Values.caBundle.key }}, path: {{ .Values.caBundle.key }}}
+        - name: data
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+        - name: docker-socket
+          emptyDir: {}
+        # The daemon's images, containers and volumes (the chart cache).
+        - name: docker-data
+          emptyDir: {}
+        # slirp4netns' TAP device: the node's (a pod that names it fails to start
+        # on a node without it, modprobe tun).
+        - name: tun
+          hostPath:
+            path: /dev/net/tun
+            type: CharDevice

@@ -1,0 +1,448 @@
+#
+# Copyright 2026 The OKDP Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+#  Unless required by applicable law or agreed to in writing, software
+#  distributed under the License is distributed on an "AS IS" BASIS,
+#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#  See the License for the specific language governing permissions and
+#  limitations under the License.
+#
+
+# RustFS, the S3 store of the sandbox: a dependency of the platform, installed with
+# helm before anything compiled (bootstrap/README.md), from the upstream chart rustfs
+# 1.0.0, as a company installs its own store, which OKDP neither deploys nor manages:
+#   helm upgrade --install rustfs rustfs --repo https://charts.rustfs.com --version 1.0.0 \
+#     -n rustfs --create-namespace --wait --timeout 15m -f bootstrap/rustfs/values.yaml
+# after External Secrets (its generators) and before OpenBao's init, which copies the
+# platform's identity into the secret store (bootstrap/openbao/init.sh).
+# The projects reach it through claims (the class s3 of platform.yaml: a bucket and
+# an identity limited to it per claim, the package s3-minio-provisioner, with the
+# provisioning identity below), or, a project that shares the platform's buckets
+# (the demo's lakehouse), through a connection of its project of contract s3: its
+# endpoints, its bucket (buckets[0] below), its credentials under the key
+# <namespace>/s3/platform of the platform's secret store (the connection's
+# remoteKey), where the bootstrap writes the identity this release creates for the
+# platform, for the namespaces of bootstrap/openbao/s3.yaml only. Any
+# S3-compatible store does the same: point the connections at it and put its keys
+# in the secret store under those keys.
+#
+# The release:
+#   - the server, standalone, one volume (the chart's Deployment), its root identity
+#     generated once in the cluster (Secret rustfs-root, External Secrets' Password
+#     generator), never committed;
+#   - the platform's identity, generated the same way (Secret rustfs-okdp, keys
+#     accessKey and secretKey), which OpenBao's init copies to the platform's secret
+#     store under <namespace>/s3/platform of the namespaces that use it
+#     (bootstrap/openbao/s3.yaml; the release itself writes nothing there: the
+#     keys are the bootstrap's, written as openbao/okdp-bootstrap);
+#   - the provisioning identity, generated the same way (Secret rustfs-provisioner,
+#     keys accessKey and secretKey), which creates the buckets of the claims, their
+#     users and policies (sandbox-charts' package s3-minio-provisioner, through
+#     MinIO's admin API), and which OpenBao's init copies to the secret store under
+#     the key of the provisioner's namespace, <namespace>/s3-provisioner;
+#   - a post-install/post-upgrade Job that creates the buckets, seeds their paths and
+#     the platform's and the provisioning identities, with the root identity (curl
+#     signs the requests: the S3 API, then RustFS' admin API);
+#   - the ingresses of the S3 API, https://s3.<domain>, and of the console,
+#     https://s3-console.<domain>, with the platform's ingress class and cluster
+#     issuer (global.okdp.ingress.className, global.okdp.tls.clusterIssuer): the
+#     bootstrap's ingress-nginx and cert-manager, installed before it, or the
+#     cluster's.
+#     The console signs in with the root identity:
+#     kubectl -n rustfs get secret rustfs-root -o jsonpath='{.data.RUSTFS_SECRET_KEY}' | base64 -d
+
+# The domain of the hosts: global.okdp.ingress.suffix of the platform values.
+domain: okdp.sandbox
+
+# The platform's identity: its access key (Secret rustfs-okdp, with its generated
+# secret key), copied by OpenBao's init to the platform's secret store under
+# <namespace>/s3/platform of the namespaces of bootstrap/openbao/s3.yaml, the
+# remoteKey of their project's s3 connection.
+platformAccess:
+  accessKey: okdp
+  # The policy it is given: S3 operations on the platform's buckets (listed below)
+  # and STS for vended credentials (Polaris), without admin API access. The
+  # provisioning Job creates the policy from this name and the buckets list. A
+  # company gives OKDP the identity its own rules allow.
+  policy: okdp-platform
+
+# The provisioning identity: its access key (Secret rustfs-provisioner, with its
+# generated secret key), copied by OpenBao's init to the secret store under
+# <namespace>/s3-provisioner, read by the provisioner's namespace only (the
+# remoteKey of the s3 connection its instance names). Its policy, created by the
+# Job: the admin API's CreateUser, CreatePolicy and AttachUserOrGroupPolicy, and
+# s3:CreateBucket; no object of any bucket (the claims' identities seed their
+# paths). It can still give any user any policy, itself included: it is as
+# trusted as the root identity, and kept out of every other namespace.
+provisionerAccess:
+  accessKey: okdp-provisioner
+  policy: okdp-provisioner
+
+# The buckets the Job creates (an existing bucket is kept), and the paths it seeds
+# with an empty .keep object (S3 has no directories: Spark's history server needs its
+# log directory to exist):
+#   okdp       the bucket of the platform's s3 connection: the services' own data
+#              (the Hive metastore's warehouse, the Spark event logs, event-logs/)
+#   lakehouse, bronze, silver, gold
+#              the medallion buckets of the demo project (okdp-examples, Polaris,
+#              Trino, JupyterHub)
+buckets:
+  - {name: okdp, paths: [event-logs]}
+  - {name: lakehouse}
+  - {name: bronze}
+  - {name: silver}
+  - {name: gold}
+
+fullnameOverride: rustfs
+nameOverride: rustfs
+mode:
+  standalone:
+    enabled: true
+  distributed:
+    enabled: false
+replicaCount: 1
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    cpu: 500m
+    memory: 2Gi
+storageclass:
+  name: standard
+  dataStorageSize: 5Gi
+  logStorageSize: 256Mi
+# The store, the chart's appVersion by tag and digest (the image index of the tag,
+# docker buildx imagetools inspect), the provisioning Job's image too; the chart's
+# init container (busybox:stable upstream): busybox 1.36.1, stable's version, by
+# tag and digest.
+image:
+  rustfs:
+    repository: rustfs/rustfs
+    tag: 1.0.0@sha256:8cc9801755448b71a786705ce76692c77e14936cccd87cf2fc31842e58f4d1ff
+  initImage:
+    repository: busybox
+    tag: 1.36.1@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662
+# The root identity: the Secret the server reads (RUSTFS_ACCESS_KEY,
+# RUSTFS_SECRET_KEY), generated below.
+secret:
+  existingSecret: rustfs-root
+# The chart's ingress serves the console only, without the platform's issuer: both
+# ingresses are below.
+ingress:
+  enabled: false
+
+# Rendered by the chart through tpl: {{ ... }} is Helm's; External Secrets' own
+# templates are escaped ({{ "{{ .password }}" }}).
+extraManifests:
+  # The root identity, generated once.
+  - apiVersion: generators.external-secrets.io/v1alpha1
+    kind: Password
+    metadata:
+      name: rustfs-root
+    spec:
+      length: 40
+      digits: 6
+      symbols: 0
+      noUpper: false
+      allowRepeat: true
+  - apiVersion: external-secrets.io/v1
+    kind: ExternalSecret
+    metadata:
+      name: rustfs-root
+    spec:
+      refreshInterval: "0"
+      target:
+        name: rustfs-root
+        creationPolicy: Owner
+        template:
+          engineVersion: v2
+          data:
+            RUSTFS_ACCESS_KEY: okdp-root
+            RUSTFS_SECRET_KEY: '{{ "{{ .password }}" }}'
+      dataFrom:
+        - sourceRef:
+            generatorRef:
+              apiVersion: generators.external-secrets.io/v1alpha1
+              kind: Password
+              name: rustfs-root
+  # The platform's identity, generated once (Secret rustfs-okdp): the provisioning
+  # Job creates it in RustFS, OpenBao's init copies it to the secret store.
+  - apiVersion: generators.external-secrets.io/v1alpha1
+    kind: Password
+    metadata:
+      name: rustfs-okdp
+    spec:
+      length: 40
+      digits: 6
+      symbols: 0
+      noUpper: false
+      allowRepeat: true
+  - apiVersion: external-secrets.io/v1
+    kind: ExternalSecret
+    metadata:
+      name: rustfs-okdp
+    spec:
+      refreshInterval: "0"
+      target:
+        name: rustfs-okdp
+        creationPolicy: Owner
+        template:
+          engineVersion: v2
+          data:
+            accessKey: "{{ .Values.platformAccess.accessKey }}"
+            secretKey: '{{ "{{ .password }}" }}'
+      dataFrom:
+        - sourceRef:
+            generatorRef:
+              apiVersion: generators.external-secrets.io/v1alpha1
+              kind: Password
+              name: rustfs-okdp
+  # The provisioning identity, generated once (Secret rustfs-provisioner): the
+  # provisioning Job creates it in RustFS, OpenBao's init copies it to the secret
+  # store.
+  - apiVersion: generators.external-secrets.io/v1alpha1
+    kind: Password
+    metadata:
+      name: rustfs-provisioner
+    spec:
+      length: 40
+      digits: 6
+      symbols: 0
+      noUpper: false
+      allowRepeat: true
+  - apiVersion: external-secrets.io/v1
+    kind: ExternalSecret
+    metadata:
+      name: rustfs-provisioner
+    spec:
+      refreshInterval: "0"
+      target:
+        name: rustfs-provisioner
+        creationPolicy: Owner
+        template:
+          engineVersion: v2
+          data:
+            accessKey: "{{ .Values.provisionerAccess.accessKey }}"
+            secretKey: '{{ "{{ .password }}" }}'
+      dataFrom:
+        - sourceRef:
+            generatorRef:
+              apiVersion: generators.external-secrets.io/v1alpha1
+              kind: Password
+              name: rustfs-provisioner
+  # The S3 API and the console.
+  - apiVersion: networking.k8s.io/v1
+    kind: Ingress
+    metadata:
+      name: rustfs-s3
+      annotations:
+        cert-manager.io/cluster-issuer: default-issuer
+        nginx.ingress.kubernetes.io/proxy-body-size: "0"
+    spec:
+      ingressClassName: nginx
+      rules:
+        - host: "s3.{{ .Values.domain }}"
+          http:
+            paths:
+              - path: /
+                pathType: Prefix
+                backend:
+                  service:
+                    name: rustfs-svc
+                    port:
+                      name: endpoint
+      tls:
+        - hosts:
+            - "s3.{{ .Values.domain }}"
+          secretName: rustfs-s3-tls
+  - apiVersion: networking.k8s.io/v1
+    kind: Ingress
+    metadata:
+      name: rustfs-console
+      annotations:
+        cert-manager.io/cluster-issuer: default-issuer
+        nginx.ingress.kubernetes.io/proxy-body-size: "0"
+    spec:
+      ingressClassName: nginx
+      rules:
+        - host: "s3-console.{{ .Values.domain }}"
+          http:
+            paths:
+              - path: /
+                pathType: Prefix
+                backend:
+                  service:
+                    name: rustfs-svc
+                    port:
+                      name: console
+      tls:
+        - hosts:
+            - "s3-console.{{ .Values.domain }}"
+          secretName: rustfs-console-tls
+  # The buckets, the platform's and the provisioning identities: a hook Job, run again at every upgrade
+  # (the server it polls is applied first); every step is idempotent. It runs the
+  # store's own image.
+  - apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: rustfs-provision
+    data:
+      provision.sh: |
+        #!/bin/sh
+        set -eu
+        endpoint="http://rustfs-svc.{{ .Release.Namespace }}.svc.cluster.local:9000"
+        # call <method> <path> [curl args]: a request signed with the root identity;
+        # fails with the server's answer on an HTTP error.
+        call() {
+          method=$1; path=$2; shift 2
+          out=$(curl -sS --fail-with-body --aws-sigv4 "aws:amz:us-east-1:s3" --user "${ROOT_AK}:${ROOT_SK}" \
+            -X "${method}" "$@" "${endpoint}${path}") || { echo "!! ${method} ${path}: ${out}" >&2; return 1; }
+        }
+        # exists <path>: the HTTP status of a HEAD request is 200.
+        exists() {
+          [ "$(curl -sS -o /dev/null -w '%{http_code}' --head --aws-sigv4 "aws:amz:us-east-1:s3" \
+            --user "${ROOT_AK}:${ROOT_SK}" "${endpoint}$1")" = 200 ]
+        }
+        json_string() { printf '"%s"' "$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g')"; }
+
+        echo ">> waiting for RustFS at ${endpoint}"
+        deadline=$(( $(date +%s) + 300 ))
+        until call GET / 2>/dev/null; do
+          if [ "$(date +%s)" -ge "${deadline}" ]; then
+            call GET /
+            exit 1
+          fi
+          sleep 3
+        done
+        echo ">> buckets"
+        {{- range $bucket := .Values.buckets }}
+        exists /{{ $bucket.name }} || call PUT /{{ $bucket.name }}
+        {{- range $bucket.paths }}
+        call PUT /{{ $bucket.name }}/{{ . }}/.keep --data-binary ''
+        {{- end }}
+        {{- end }}
+        echo ">> the platform's policy {{ .Values.platformAccess.policy }}"
+        # The platform's identity gets S3 and STS access on its own buckets, not
+        # the admin API: a scoped policy created here, not a built-in one. An STS
+        # statement takes no Resource (RustFS refuses "*").
+        policy_json='{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:*"],"Resource":[{{- $first := true }}{{- range $bucket := .Values.buckets }}{{- if not $first }},{{ end }}{{- $first = false }}"arn:aws:s3:::{{ $bucket.name }}","arn:aws:s3:::{{ $bucket.name }}/*"{{- end }}]},{"Effect":"Allow","Action":["sts:AssumeRole"]}]}'
+        call PUT /rustfs/admin/v3/add-canned-policy --url-query "name={{ .Values.platformAccess.policy }}" \
+          --data-binary "${policy_json}" -H "Content-Type: application/json"
+        echo ">> the platform's identity ${OKDP_AK} ({{ .Values.platformAccess.policy }})"
+        call PUT /rustfs/admin/v3/add-user --url-query "accessKey=${OKDP_AK}" \
+          --data-binary "{\"secretKey\":$(json_string "${OKDP_SK}"),\"status\":\"enabled\"}"
+        call PUT /rustfs/admin/v3/set-user-or-group-policy --url-query "policyName={{ .Values.platformAccess.policy }}" \
+          --url-query "userOrGroup=${OKDP_AK}" --url-query "isGroup=false"
+        echo ">> the provisioning policy {{ .Values.provisionerAccess.policy }}"
+        # Users and policies through the admin API, and buckets, for the claims; no
+        # object of any bucket. An admin statement takes no Resource.
+        provisioner_json='{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["admin:CreateUser","admin:CreatePolicy","admin:AttachUserOrGroupPolicy"]},{"Effect":"Allow","Action":["s3:CreateBucket"],"Resource":["arn:aws:s3:::*"]}]}'
+        call PUT /rustfs/admin/v3/add-canned-policy --url-query "name={{ .Values.provisionerAccess.policy }}" \
+          --data-binary "${provisioner_json}" -H "Content-Type: application/json"
+        echo ">> the provisioning identity ${PROV_AK} ({{ .Values.provisionerAccess.policy }})"
+        call PUT /rustfs/admin/v3/add-user --url-query "accessKey=${PROV_AK}" \
+          --data-binary "{\"secretKey\":$(json_string "${PROV_SK}"),\"status\":\"enabled\"}"
+        call PUT /rustfs/admin/v3/set-user-or-group-policy --url-query "policyName={{ .Values.provisionerAccess.policy }}" \
+          --url-query "userOrGroup=${PROV_AK}" --url-query "isGroup=false"
+        echo ">> provisioning complete"
+  - apiVersion: batch/v1
+    kind: Job
+    metadata:
+      name: rustfs-provision
+      annotations:
+        helm.sh/hook: post-install,post-upgrade
+        helm.sh/hook-delete-policy: before-hook-creation
+    spec:
+      backoffLimit: 20
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: rustfs-provision
+            app.kubernetes.io/instance: "{{ .Release.Name }}"
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: provision
+              image: "{{ .Values.image.rustfs.repository }}:{{ .Values.image.rustfs.tag }}"
+              imagePullPolicy: IfNotPresent
+              command: ["/bin/sh", "/scripts/provision.sh"]
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+                runAsUser: 10001
+                runAsGroup: 10001
+                capabilities:
+                  drop: [ALL]
+              env:
+                - name: ROOT_AK
+                  valueFrom: {secretKeyRef: {name: rustfs-root, key: RUSTFS_ACCESS_KEY}}
+                - name: ROOT_SK
+                  valueFrom: {secretKeyRef: {name: rustfs-root, key: RUSTFS_SECRET_KEY}}
+                - name: OKDP_AK
+                  valueFrom: {secretKeyRef: {name: rustfs-okdp, key: accessKey}}
+                - name: OKDP_SK
+                  valueFrom: {secretKeyRef: {name: rustfs-okdp, key: secretKey}}
+                - name: PROV_AK
+                  valueFrom: {secretKeyRef: {name: rustfs-provisioner, key: accessKey}}
+                - name: PROV_SK
+                  valueFrom: {secretKeyRef: {name: rustfs-provisioner, key: secretKey}}
+              volumeMounts:
+                - name: scripts
+                  mountPath: /scripts
+          volumes:
+            - name: scripts
+              configMap:
+                name: rustfs-provision
+  # The network (bootstrap/README.md, Network policies): the S3 API (9000) from
+  # every namespace (the projects' services and the claims' provisioner call
+  # rustfs-svc directly), the console (9001) from the ingress controller only.
+  - apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata:
+      name: default-deny-ingress
+    spec:
+      podSelector: {}
+      policyTypes: [Ingress]
+  - apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata:
+      name: rustfs-s3
+    spec:
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: rustfs
+          app.kubernetes.io/instance: "{{ .Release.Name }}"
+      policyTypes: [Ingress]
+      ingress:
+        - from:
+            - namespaceSelector: {}
+          ports:
+            - {protocol: TCP, port: 9000}
+  - apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata:
+      name: rustfs-console-from-ingress
+    spec:
+      podSelector:
+        matchLabels:
+          app.kubernetes.io/name: rustfs
+          app.kubernetes.io/instance: "{{ .Release.Name }}"
+      policyTypes: [Ingress]
+      ingress:
+        - from:
+            - namespaceSelector:
+                matchLabels:
+                  kubernetes.io/metadata.name: ingress-nginx
+              podSelector:
+                matchLabels:
+                  app.kubernetes.io/name: ingress-nginx
+          ports:
+            - {protocol: TCP, port: 9001}
