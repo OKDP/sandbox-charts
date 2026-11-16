@@ -1,0 +1,217 @@
+#
+# Copyright 2026 The OKDP Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+#  Unless required by applicable law or agreed to in writing, software
+#  distributed under the License is distributed on an "AS IS" BASIS,
+#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#  See the License for the specific language governing permissions and
+#  limitations under the License.
+#
+# The hosts a project's namespace serves (bootstrap/README.md): the second line of the
+# compiler's rule (okdp-compiler: global.okdp.policy.ingressHosts, hosts.go), for what
+# reaches the cluster without it (kubectl, a chart's own default, a compromised
+# pipeline), as a ValidatingAdmissionPolicy (Kubernetes 1.30+), no controller:
+#   kubectl apply -f bootstrap/protection/ingress-hosts.yaml
+# Ingress hosts are one namespace of names for the whole cluster: ingress-nginx merges
+# the rules of a host across namespaces (a project's Ingress for keycloak.okdp.sandbox,
+# path /realms/okdp/login-actions, would take the identity provider's traffic), and
+# cert-manager signs any name from default-issuer (approver-policy,
+# bootstrap/approver-policy, is the other half: it refuses the certificate).
+# A namespace that is not one of the platform's own may serve, in an Ingress (rules and
+# tls), a Certificate (dnsNames, commonName), a Gateway's listeners (hostname) and the
+# annotations that name hosts (cert-manager.io/common-name and alt-names, nginx
+# server-alias, external-dns hostname), only:
+#   - <label>.<namespace>.<suffix>, one DNS label, the namespace, the suffix (demo:
+#     jupyterhub.demo.okdp.sandbox): a namespace of a name's own, so that no namespace
+#     can take a host of another (namespace data has no host of big-data); or
+#   - a host the platform lists for it, `hosts.<namespace>` of the param below.
+# An Ingress rule without a host, an Ingress's spec.defaultBackend and a Gateway
+# listener without a hostname are refused: each answers every host (ingress-nginx
+# takes a defaultBackend for its catch-all server; `*.<suffix>` all resolve to it).
+# A second policy of this file, okdp-external-name: a Service of type ExternalName is
+# refused in those namespaces (ingress-nginx would proxy a project's Ingress to the
+# name it holds, keycloak-http.keycloak.svc or another project's Service, the
+# NetworkPolicies left behind; disable-svc-external-name of bootstrap/ingress-nginx
+# is the controller's half).
+# The param, the ConfigMap okdp-ingress-hosts of kube-tools:
+#   suffix           global.okdp.ingress.suffix of the platform values
+#   hosts.<ns>       the hosts listed for the namespace, comma-separated, as
+#                    global.okdp.policy.ingressHosts of the platform values lists them
+# The bindings leave out the namespaces of the platform's own, those labelled
+# okdp.io/platform "true" or "system" by bootstrap/namespaces.yaml (the bootstrap's, the
+# engines', global.okdp.policy.privileged of the platform values): a namespace without
+# the label is bound. Keep the param with the platform values, and change the suffix
+# with the domain (okdp-sandbox's README, Another domain). Missing param: the policy
+# refuses.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: okdp-ingress-hosts
+  namespace: kube-tools
+  labels:
+    app.kubernetes.io/part-of: okdp-sandbox
+data:
+  suffix: okdp.sandbox
+  # hosts.demo: "grafana.okdp.sandbox"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: okdp-ingress-hosts
+  labels:
+    app.kubernetes.io/part-of: okdp-sandbox
+spec:
+  failurePolicy: Fail
+  paramKind:
+    apiVersion: v1
+    kind: ConfigMap
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [networking.k8s.io]
+        apiVersions: ["*"]
+        operations: [CREATE, UPDATE]
+        resources: [ingresses]
+      - apiGroups: [cert-manager.io]
+        apiVersions: ["*"]
+        operations: [CREATE, UPDATE]
+        resources: [certificates]
+      - apiGroups: [gateway.networking.k8s.io]
+        apiVersions: ["*"]
+        operations: [CREATE, UPDATE]
+        resources: [gateways]
+  variables:
+    - name: own
+      expression: >-
+        '^[a-z0-9]([-a-z0-9]*[a-z0-9])?\\.' + request.namespace + '\\.' + params.data.suffix.lowerAscii().replace('.', '\\.') + '$'
+    - name: form
+      expression: >-
+        '<label>.' + request.namespace + '.' + params.data.suffix.lowerAscii()
+    - name: listed
+      expression: >-
+        ('hosts.' + request.namespace) in params.data ?
+          params.data['hosts.' + request.namespace].lowerAscii().split(',').map(h, h.trim()).filter(h, h != '') : []
+    - name: ingress
+      expression: request.resource.resource == 'ingresses'
+    - name: certificate
+      expression: request.resource.resource == 'certificates'
+    - name: gateway
+      expression: request.resource.resource == 'gateways'
+    - name: annotations
+      expression: >-
+        has(object.metadata.annotations) ? object.metadata.annotations : {}
+  validations:
+    - expression: >-
+        !variables.ingress || !has(object.spec.rules) || object.spec.rules.all(r, has(r.host) && r.host != '' &&
+          (r.host.lowerAscii() in variables.listed || r.host.lowerAscii().matches(variables.own)))
+      messageExpression: >-
+        'an Ingress of ' + request.namespace + ' serves hosts ' + variables.form +
+        ' or listed for it (hosts.' + request.namespace + ' of okdp-ingress-hosts), and every rule has a host (okdp-ingress-hosts)'
+      reason: Forbidden
+    - expression: >-
+        !variables.ingress || !has(object.spec.tls) || object.spec.tls.all(t, !has(t.hosts) ||
+          t.hosts.all(h, h.lowerAscii() in variables.listed || h.lowerAscii().matches(variables.own)))
+      messageExpression: >-
+        'an Ingress of ' + request.namespace + ' has certificates for hosts ' + variables.form +
+        ' or listed for it (hosts.' + request.namespace + ' of okdp-ingress-hosts) (okdp-ingress-hosts)'
+      reason: Forbidden
+    - expression: >-
+        !variables.certificate || !has(object.spec.dnsNames) || object.spec.dnsNames.all(h, h.lowerAscii() in variables.listed || h.lowerAscii().matches(variables.own))
+      messageExpression: >-
+        'a Certificate of ' + request.namespace + ' names hosts ' + variables.form +
+        ' or listed for it (hosts.' + request.namespace + ' of okdp-ingress-hosts) (okdp-ingress-hosts)'
+      reason: Forbidden
+    - expression: >-
+        !variables.certificate || !has(object.spec.commonName) || object.spec.commonName == '' ||
+          object.spec.commonName.lowerAscii() in variables.listed || object.spec.commonName.lowerAscii().matches(variables.own)
+      messageExpression: >-
+        'a Certificate of ' + request.namespace + ' has a commonName ' + variables.form +
+        ' or listed for it (hosts.' + request.namespace + ' of okdp-ingress-hosts) (okdp-ingress-hosts)'
+      reason: Forbidden
+    - expression: >-
+        !variables.ingress || !has(object.spec.defaultBackend)
+      messageExpression: >-
+        'an Ingress of ' + request.namespace + ' has no spec.defaultBackend: it answers every host of the ingress controller (okdp-ingress-hosts)'
+      reason: Forbidden
+    - expression: >-
+        !variables.gateway || !has(object.spec.listeners) || object.spec.listeners.all(l, has(l.hostname) && l.hostname != '' &&
+          (l.hostname.lowerAscii() in variables.listed || l.hostname.lowerAscii().matches(variables.own)))
+      messageExpression: >-
+        'a Gateway of ' + request.namespace + ' has listeners of hostnames ' + variables.form +
+        ' or listed for it (hosts.' + request.namespace + ' of okdp-ingress-hosts), and every listener has a hostname (okdp-ingress-hosts)'
+      reason: Forbidden
+    - expression: >-
+        ['cert-manager.io/common-name', 'cert-manager.io/alt-names', 'nginx.ingress.kubernetes.io/server-alias', 'external-dns.alpha.kubernetes.io/hostname'].all(k, !(k in variables.annotations) ||
+          variables.annotations[k].replace('\n', ',').replace('\t', ',').replace(' ', ',').split(',').filter(h, h != '').all(h,
+            h.lowerAscii() in variables.listed || h.lowerAscii().matches(variables.own)))
+      messageExpression: >-
+        'the annotations of an object of ' + request.namespace + ' that name hosts (cert-manager.io/common-name and alt-names, nginx server-alias, external-dns hostname) name hosts ' +
+        variables.form + ' or listed for it (hosts.' + request.namespace + ' of okdp-ingress-hosts) (okdp-ingress-hosts)'
+      reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: okdp-ingress-hosts
+  labels:
+    app.kubernetes.io/part-of: okdp-sandbox
+spec:
+  policyName: okdp-ingress-hosts
+  validationActions: [Deny]
+  paramRef:
+    name: okdp-ingress-hosts
+    namespace: kube-tools
+    parameterNotFoundAction: Deny
+  matchResources:
+    # Every namespace but the platform's own (bootstrap/namespaces.yaml, the label
+    # okdp.io/platform): they serve the platform's names (keycloak, s3, forgejo,
+    # argocd...). cnpg-system and s3-system are confined projects, bound. NotIn also
+    # selects a namespace without the key: the label's absence binds it.
+    namespaceSelector:
+      matchExpressions:
+        - key: okdp.io/platform
+          operator: NotIn
+          values: ["true", system]
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: okdp-external-name
+  labels:
+    app.kubernetes.io/part-of: okdp-sandbox
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["*"]
+        operations: [CREATE, UPDATE]
+        resources: [services]
+  validations:
+    - expression: >-
+        !has(object.spec.type) || object.spec.type != 'ExternalName'
+      messageExpression: >-
+        'a Service of ' + request.namespace + ' is not of type ExternalName: the ingress controller would proxy to a name of its choice (okdp-external-name)'
+      reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: okdp-external-name
+  labels:
+    app.kubernetes.io/part-of: okdp-sandbox
+spec:
+  policyName: okdp-external-name
+  validationActions: [Deny]
+  matchResources:
+    # The same namespaces as okdp-ingress-hosts': all but the platform's own.
+    namespaceSelector:
+      matchExpressions:
+        - key: okdp.io/platform
+          operator: NotIn
+          values: ["true", system]

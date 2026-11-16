@@ -1,0 +1,356 @@
+#
+# Copyright 2026 The OKDP Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+#  Unless required by applicable law or agreed to in writing, software
+#  distributed under the License is distributed on an "AS IS" BASIS,
+#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#  See the License for the specific language governing permissions and
+#  limitations under the License.
+#
+
+# The admission policies of the platform (bootstrap/README.md), its deletion
+# protection, three ValidatingAdmissionPolicies, the bounds of a ServiceAccount's
+# pods, a fourth, and the guard of the label okdp.io/platform, a fifth
+# (admissionregistration.k8s.io/v1, Kubernetes 1.30+), no controller:
+#   kubectl apply -f bootstrap/protection/policies.yaml
+# Helm, Flux and Argo CD are refused like anyone else: to delete a protected object,
+# remove its label (or its API group from the third policy) first, e.g.
+#   kubectl label deployment -n <namespace> <name> okdp.io/protected-
+# 1. okdp-protected: DELETE of a CRD, a Namespace, a Deployment, StatefulSet or
+#    DaemonSet labelled okdp.io/protected=true (cert-manager's and trust-manager's
+#    commonLabels, a service's `protected` parameter).
+# 2. okdp-protected-workloads: DELETE of a Deployment, StatefulSet or DaemonSet whose
+#    pod template carries the label, whatever its own labels (charts that can label
+#    their pods only). An objectSelector sees the metadata labels only, so this policy
+#    tests the pod template in its matchConditions, every field guarded with has():
+#    an evaluation error would refuse the deletion (failurePolicy: Fail).
+# 3. okdp-protected-crds: DELETE of any CRD of these API groups or of their subgroups:
+#    the operators the bootstrap installs cannot label their CRDs, and deleting a CRD
+#    deletes every object of its kind.
+# 4. okdp-pod-bounds: the pods a ServiceAccount creates and the objects around them
+#    it changes, in a namespace whose instance asks for it (a ConfigMap labelled
+#    okdp.io/pod-bounds=true: platform-charts' jupyterhub,
+#    <release>-spark-pod-bounds, for its PySpark sessions), below.
+# 5. okdp-platform-label: only a cluster administrator sets, changes or removes the
+#    label okdp.io/platform of a Namespace, below.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: okdp-protected
+  labels:
+    app.kubernetes.io/part-of: okdp-sandbox
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    objectSelector:
+      matchLabels:
+        okdp.io/protected: "true"
+    resourceRules:
+      - apiGroups: [apiextensions.k8s.io]
+        apiVersions: ["*"]
+        operations: [DELETE]
+        resources: [customresourcedefinitions]
+      - apiGroups: [""]
+        apiVersions: ["*"]
+        operations: [DELETE]
+        resources: [namespaces]
+      - apiGroups: [apps]
+        apiVersions: ["*"]
+        operations: [DELETE]
+        resources: [deployments, statefulsets, daemonsets]
+  validations:
+    - expression: "false"
+      messageExpression: "oldObject.kind + ' ' + oldObject.metadata.name + ' is protected by OKDP (label okdp.io/protected=true): remove the label before deleting it'"
+      reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: okdp-protected
+  labels:
+    app.kubernetes.io/part-of: okdp-sandbox
+spec:
+  policyName: okdp-protected
+  validationActions: [Deny]
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: okdp-protected-workloads
+  labels:
+    app.kubernetes.io/part-of: okdp-sandbox
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [apps]
+        apiVersions: ["*"]
+        operations: [DELETE]
+        resources: [deployments, statefulsets, daemonsets]
+  matchConditions:
+    - name: pod-template-protected
+      expression: "has(oldObject.spec.template) && has(oldObject.spec.template.metadata) && has(oldObject.spec.template.metadata.labels) && 'okdp.io/protected' in oldObject.spec.template.metadata.labels && oldObject.spec.template.metadata.labels['okdp.io/protected'] == 'true'"
+  validations:
+    - expression: "false"
+      messageExpression: "oldObject.kind + ' ' + oldObject.metadata.name + ' is protected by OKDP (pod template label okdp.io/protected=true): remove the label from its pod template before deleting it'"
+      reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: okdp-protected-workloads
+  labels:
+    app.kubernetes.io/part-of: okdp-sandbox
+spec:
+  policyName: okdp-protected-workloads
+  validationActions: [Deny]
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: okdp-protected-crds
+  labels:
+    app.kubernetes.io/part-of: okdp-sandbox
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [apiextensions.k8s.io]
+        apiVersions: ["*"]
+        operations: [DELETE]
+        resources: [customresourcedefinitions]
+  variables:
+    - name: groups
+      expression: '["cert-manager.io","external-secrets.io","postgresql.cnpg.io"]'
+  validations:
+    - expression: "!variables.groups.exists(g, oldObject.spec.group == g || oldObject.spec.group.endsWith('.' + g))"
+      messageExpression: "'CustomResourceDefinition ' + oldObject.metadata.name + ' is protected by OKDP (API group ' + oldObject.spec.group + '): remove it from bootstrap/protection/policies.yaml first'"
+      reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: okdp-protected-crds
+  labels:
+    app.kubernetes.io/part-of: okdp-sandbox
+spec:
+  policyName: okdp-protected-crds
+  validationActions: [Deny]
+---
+# okdp-pod-bounds: bounds what a ServiceAccount does with pods and the objects
+# around them, in the namespaces where an instance asks for it with a ConfigMap
+# labelled okdp.io/pod-bounds=true, the binding's param (looked up in the request's
+# namespace; a namespace without one is not bounded):
+#   data.serviceAccount  the ServiceAccount bounded (a JupyterHub PySpark
+#                        session's, <release>-spark)
+#   data.secrets         the Secrets its pods may read, comma-separated
+#   data.pvcPrefixes     the PersistentVolumeClaims its pods may mount, by name
+#                        prefix, comma-separated; none by default: a claim is not
+#                        the ServiceAccount's to mount (JupyterHub's claim-<user>
+#                        volumes are other pods' home directories)
+#   data.ownerLabel      the label key of the objects it owns, spark-app-selector by
+#                        default (Spark puts it on its executors' pods, their
+#                        configmaps and their claims)
+# Its pods are created as itself (spec.serviceAccountName) and read no other
+# Secret (secret and projected volumes, env secretKeyRef, envFrom secretRef), nor
+# mount a volume of a kind that carries a Secret reference (csi, flexVolume,
+# azureFile, cephfs, rbd, iscsi), nor a claim outside pvcPrefixes. It changes
+# (UPDATE) or deletes only the pods, services, configmaps and claims that carry
+# the owner label: another instance's, another user's, the hub's are not its to
+# touch, and a pod it updates keeps the images it has (a patch of
+# spec.containers[*].image would run its code with that pod's Secrets and
+# ServiceAccount). It may not write the labelled ConfigMaps (its Role has
+# configmaps create, patch and delete). Requests of any other user are not
+# evaluated (matchConditions). Several params in a namespace (several instances)
+# are each evaluated, all must pass. Kubernetes 1.30+ (admissionregistration.k8s.io/v1).
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: okdp-pod-bounds
+  labels:
+    app.kubernetes.io/part-of: okdp-sandbox
+spec:
+  failurePolicy: Fail
+  paramKind:
+    apiVersion: v1
+    kind: ConfigMap
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE, DELETE]
+        resources: [pods]
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE, DELETE]
+        resources: [configmaps]
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [UPDATE, DELETE]
+        resources: [services, persistentvolumeclaims]
+  matchConditions:
+    - name: bounded-service-account
+      expression: >-
+        has(params.data) && 'serviceAccount' in params.data &&
+        request.userInfo.username == 'system:serviceaccount:' + request.namespace + ':' + params.data.serviceAccount
+  variables:
+    - name: serviceAccount
+      expression: params.data.serviceAccount
+    - name: secrets
+      expression: >-
+        'secrets' in params.data ? params.data.secrets.split(',').map(s, s.trim()).filter(s, s != '') : []
+    - name: pvcPrefixes
+      expression: >-
+        'pvcPrefixes' in params.data ? params.data.pvcPrefixes.split(',').map(s, s.trim()).filter(s, s != '') : []
+    - name: ownerLabel
+      expression: >-
+        'ownerLabel' in params.data && params.data.ownerLabel.trim() != '' ? params.data.ownerLabel.trim() : 'spark-app-selector'
+    - name: pod
+      expression: request.resource.resource == 'pods'
+    # The pod being created or updated: a DELETE has no object.
+    - name: podSpec
+      expression: variables.pod && request.operation != 'DELETE'
+    - name: volumes
+      expression: >-
+        variables.podSpec && has(object.spec.volumes) ? object.spec.volumes : []
+    - name: containers
+      expression: >-
+        variables.podSpec ? (has(object.spec.containers) ? object.spec.containers : []) +
+          (has(object.spec.initContainers) ? object.spec.initContainers : []) : []
+    - name: images
+      expression: >-
+        variables.podSpec ? (has(object.spec.containers) ? object.spec.containers.map(c, c.image) : []) +
+          (has(object.spec.initContainers) ? object.spec.initContainers.map(c, 'init:' + c.image) : []) : []
+    - name: oldImages
+      expression: >-
+        variables.pod && request.operation == 'UPDATE' ?
+          (has(oldObject.spec.containers) ? oldObject.spec.containers.map(c, c.image) : []) +
+          (has(oldObject.spec.initContainers) ? oldObject.spec.initContainers.map(c, 'init:' + c.image) : []) : []
+  validations:
+    - expression: >-
+        !variables.podSpec || (has(object.spec.serviceAccountName) && object.spec.serviceAccountName == variables.serviceAccount)
+      messageExpression: >-
+        'the pods of ServiceAccount ' + variables.serviceAccount + ' run as ' + variables.serviceAccount + ' (okdp-pod-bounds)'
+      reason: Forbidden
+    - expression: >-
+        variables.volumes.all(v,
+          (!has(v.secret) || (has(v.secret.secretName) && v.secret.secretName in variables.secrets)) &&
+          (!has(v.projected) || !has(v.projected.sources) || v.projected.sources.all(s,
+            !has(s.secret) || (has(s.secret.name) && s.secret.name in variables.secrets))))
+      messageExpression: >-
+        'the pods of ServiceAccount ' + variables.serviceAccount + ' mount no Secret but ' +
+        (size(variables.secrets) == 0 ? 'none' : variables.secrets.join(', ')) + ' (okdp-pod-bounds)'
+      reason: Forbidden
+    - expression: >-
+        variables.volumes.all(v, !has(v.csi) && !has(v.flexVolume) && !has(v.azureFile) &&
+          !has(v.cephfs) && !has(v.rbd) && !has(v.iscsi))
+      messageExpression: >-
+        'the pods of ServiceAccount ' + variables.serviceAccount + ' mount no csi, flexVolume, azureFile, cephfs, rbd or iscsi volume (okdp-pod-bounds)'
+      reason: Forbidden
+    - expression: >-
+        variables.volumes.all(v, !has(v.persistentVolumeClaim) ||
+          (has(v.persistentVolumeClaim.claimName) &&
+           variables.pvcPrefixes.exists(p, v.persistentVolumeClaim.claimName.startsWith(p))))
+      messageExpression: >-
+        'the pods of ServiceAccount ' + variables.serviceAccount + ' mount no claim but those named ' +
+        (size(variables.pvcPrefixes) == 0 ? 'none' : variables.pvcPrefixes.join('*, ') + '*') + ' (okdp-pod-bounds)'
+      reason: Forbidden
+    - expression: >-
+        variables.containers.all(c,
+          (!has(c.env) || c.env.all(e, !has(e.valueFrom) || !has(e.valueFrom.secretKeyRef) ||
+            (has(e.valueFrom.secretKeyRef.name) && e.valueFrom.secretKeyRef.name in variables.secrets))) &&
+          (!has(c.envFrom) || c.envFrom.all(f, !has(f.secretRef) ||
+            (has(f.secretRef.name) && f.secretRef.name in variables.secrets))))
+      messageExpression: >-
+        'the containers of ServiceAccount ' + variables.serviceAccount + ' read no Secret but ' +
+        (size(variables.secrets) == 0 ? 'none' : variables.secrets.join(', ')) + ' (okdp-pod-bounds)'
+      reason: Forbidden
+    - expression: >-
+        request.operation == 'CREATE' || (oldObject != null && has(oldObject.metadata.labels) &&
+          variables.ownerLabel in oldObject.metadata.labels)
+      messageExpression: >-
+        'ServiceAccount ' + variables.serviceAccount + ' changes or deletes only the ' + request.resource.resource +
+        ' labelled ' + variables.ownerLabel + ' (okdp-pod-bounds)'
+      reason: Forbidden
+    - expression: >-
+        !variables.pod || request.operation != 'UPDATE' || variables.images == variables.oldImages
+      messageExpression: >-
+        'ServiceAccount ' + variables.serviceAccount + ' does not change the images of a pod (okdp-pod-bounds)'
+      reason: Forbidden
+    - expression: >-
+        variables.pod || !(
+          (object != null && has(object.metadata.labels) && 'okdp.io/pod-bounds' in object.metadata.labels) ||
+          (oldObject != null && has(oldObject.metadata.labels) && 'okdp.io/pod-bounds' in oldObject.metadata.labels))
+      messageExpression: >-
+        'ServiceAccount ' + variables.serviceAccount + ' may not write the ConfigMaps labelled okdp.io/pod-bounds (okdp-pod-bounds)'
+      reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: okdp-pod-bounds
+  labels:
+    app.kubernetes.io/part-of: okdp-sandbox
+spec:
+  policyName: okdp-pod-bounds
+  validationActions: [Deny]
+  paramRef:
+    selector:
+      matchLabels:
+        okdp.io/pod-bounds: "true"
+    parameterNotFoundAction: Allow
+---
+# okdp-platform-label: the label okdp.io/platform of bootstrap/namespaces.yaml leaves a
+# namespace out of okdp-ingress-hosts and okdp-external-name and gives it the
+# certificates of okdp-platform (approver-policy). A CREATE or an UPDATE of a Namespace
+# that sets, changes or removes it comes from a cluster administrator only (the groups
+# below: kubeadm's admin.conf since Kubernetes 1.29, then system:masters): not a
+# tenant, nor an engine, whose compiled Namespaces leave the label alone (they do not
+# carry it). The subresources too: an update of status or finalize can carry metadata.
+# Add the group of your own administrators to the list.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: okdp-platform-label
+  labels:
+    app.kubernetes.io/part-of: okdp-sandbox
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["*"]
+        operations: [CREATE, UPDATE]
+        resources: [namespaces, namespaces/status, namespaces/finalize]
+  variables:
+    - name: value
+      expression: >-
+        has(object.metadata.labels) && 'okdp.io/platform' in object.metadata.labels ? object.metadata.labels['okdp.io/platform'] : ''
+    - name: oldValue
+      expression: >-
+        oldObject != null && has(oldObject.metadata.labels) && 'okdp.io/platform' in oldObject.metadata.labels ? oldObject.metadata.labels['okdp.io/platform'] : ''
+    - name: admin
+      expression: >-
+        has(request.userInfo.groups) && request.userInfo.groups.exists(g, g in ['system:masters', 'kubeadm:cluster-admins'])
+  validations:
+    - expression: >-
+        variables.value == variables.oldValue || variables.admin
+      messageExpression: >-
+        'only a cluster administrator sets, changes or removes the label okdp.io/platform of a Namespace (okdp-platform-label)'
+      reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: okdp-platform-label
+  labels:
+    app.kubernetes.io/part-of: okdp-sandbox
+spec:
+  policyName: okdp-platform-label
+  validationActions: [Deny]

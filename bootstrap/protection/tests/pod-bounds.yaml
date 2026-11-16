@@ -1,0 +1,920 @@
+#
+# Copyright 2026 The OKDP Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+#  Unless required by applicable law or agreed to in writing, software
+#  distributed under the License is distributed on an "AS IS" BASIS,
+#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#  See the License for the specific language governing permissions and
+#  limitations under the License.
+#
+
+# okdp-pod-bounds: what a bounded ServiceAccount does with pods, configmaps, services and
+# claims. Two instances: demo (the secrets and the claim prefix listed, the default owner
+# label spark-app-selector) and team (no secret, no claim, its own owner label).
+# Run by scripts/check-bootstrap.sh (scripts/policytest).
+policies: ../policies.yaml
+policy: okdp-pod-bounds
+params:
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: demo-spark-pod-bounds
+    namespace: demo
+    labels: {okdp.io/pod-bounds: 'true'}
+  data: {serviceAccount: demo-spark, secrets: 'demo-ca, demo-s3', pvcPrefixes: spark-exec-}
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: team-spark-pod-bounds
+    namespace: team
+    labels: {okdp.io/pod-bounds: 'true'}
+  data: {serviceAccount: team-spark, secrets: '', ownerLabel: okdp.io/owner}
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    name: unrelated
+    namespace: other
+    labels: {a: b}
+  data: {}
+cases:
+- name: a pod as the ServiceAccount, with its Secrets, is created
+  allow: true
+  operation: CREATE
+  user: system:serviceaccount:demo:demo-spark
+  namespace: demo
+  group: ''
+  resource: pods
+  object:
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: exec-1
+      namespace: demo
+      labels: {spark-app-selector: app-1, spark-role: executor}
+    spec:
+      serviceAccountName: demo-spark
+      containers:
+      - name: main
+        image: spark:3.4
+        env:
+        - name: K
+          valueFrom:
+            secretKeyRef: {name: demo-s3, key: accessKey}
+        envFrom:
+        - secretRef: {name: demo-ca}
+      volumes:
+      - name: ca
+        secret: {secretName: demo-ca}
+      - name: tmp
+        emptyDir: {}
+      - name: p
+        projected:
+          sources:
+          - secret: {name: demo-s3}
+          - configMap: {name: x}
+- name: a pod as another ServiceAccount is refused
+  allow: false
+  message: run as demo-spark
+  operation: CREATE
+  user: system:serviceaccount:demo:demo-spark
+  namespace: demo
+  group: ''
+  resource: pods
+  object:
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: exec-1
+      namespace: demo
+      labels: {spark-app-selector: app-1, spark-role: executor}
+    spec:
+      serviceAccountName: default
+      containers:
+      - {name: main, image: 'spark:3.4'}
+- name: a pod without a ServiceAccount is refused
+  allow: false
+  message: run as demo-spark
+  operation: CREATE
+  user: system:serviceaccount:demo:demo-spark
+  namespace: demo
+  group: ''
+  resource: pods
+  object:
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: exec-1
+      namespace: demo
+      labels: {spark-app-selector: app-1, spark-role: executor}
+    spec:
+      containers:
+      - {name: main, image: 'spark:3.4'}
+- name: a pod mounting another Secret is refused
+  allow: false
+  message: mount no Secret but demo-ca, demo-s3
+  operation: CREATE
+  user: system:serviceaccount:demo:demo-spark
+  namespace: demo
+  group: ''
+  resource: pods
+  object:
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: exec-1
+      namespace: demo
+      labels: {spark-app-selector: app-1, spark-role: executor}
+    spec:
+      serviceAccountName: demo-spark
+      containers:
+      - {name: main, image: 'spark:3.4'}
+      volumes:
+      - name: s
+        secret: {secretName: hub-secret}
+- name: a pod projecting another Secret is refused
+  allow: false
+  message: mount no Secret
+  operation: CREATE
+  user: system:serviceaccount:demo:demo-spark
+  namespace: demo
+  group: ''
+  resource: pods
+  object:
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: exec-1
+      namespace: demo
+      labels: {spark-app-selector: app-1, spark-role: executor}
+    spec:
+      serviceAccountName: demo-spark
+      containers:
+      - {name: main, image: 'spark:3.4'}
+      volumes:
+      - name: p
+        projected:
+          sources:
+          - secret: {name: hub-secret}
+- name: a pod mounting a csi volume is refused
+  allow: false
+  message: csi, flexVolume
+  operation: CREATE
+  user: system:serviceaccount:demo:demo-spark
+  namespace: demo
+  group: ''
+  resource: pods
+  object:
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: exec-1
+      namespace: demo
+      labels: {spark-app-selector: app-1, spark-role: executor}
+    spec:
+      serviceAccountName: demo-spark
+      containers:
+      - {name: main, image: 'spark:3.4'}
+      volumes:
+      - name: c
+        csi: {driver: secrets-store.csi.k8s.io}
+- name: a pod reading another Secret in its env is refused
+  allow: false
+  message: read no Secret but
+  operation: CREATE
+  user: system:serviceaccount:demo:demo-spark
+  namespace: demo
+  group: ''
+  resource: pods
+  object:
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: exec-1
+      namespace: demo
+      labels: {spark-app-selector: app-1, spark-role: executor}
+    spec:
+      serviceAccountName: demo-spark
+      containers:
+      - name: main
+        image: spark:3.4
+        env:
+        - name: K
+          valueFrom:
+            secretKeyRef: {name: hub-secret, key: k}
+- name: a pod reading another Secret with envFrom is refused
+  allow: false
+  message: read no Secret but
+  operation: CREATE
+  user: system:serviceaccount:demo:demo-spark
+  namespace: demo
+  group: ''
+  resource: pods
+  object:
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: exec-1
+      namespace: demo
+      labels: {spark-app-selector: app-1, spark-role: executor}
+    spec:
+      serviceAccountName: demo-spark
+      containers:
+      - name: main
+        image: spark:3.4
+        envFrom:
+        - secretRef: {name: hub-secret}
+- name: an init container reading another Secret is refused
+  allow: false
+  message: read no Secret but
+  operation: CREATE
+  user: system:serviceaccount:demo:demo-spark
+  namespace: demo
+  group: ''
+  resource: pods
+  object:
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: exec-1
+      namespace: demo
+      labels: {spark-app-selector: app-1, spark-role: executor}
+    spec:
+      serviceAccountName: demo-spark
+      containers:
+      - {name: main, image: 'spark:3.4'}
+      initContainers:
+      - name: i
+        image: busybox
+        env:
+        - name: K
+          valueFrom:
+            secretKeyRef: {name: hub-secret, key: k}
+- name: a pod mounting another user's claim is refused
+  allow: false
+  message: mount no claim but those named spark-exec-*
+  operation: CREATE
+  user: system:serviceaccount:demo:demo-spark
+  namespace: demo
+  group: ''
+  resource: pods
+  object:
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: exec-1
+      namespace: demo
+      labels: {spark-app-selector: app-1, spark-role: executor}
+    spec:
+      serviceAccountName: demo-spark
+      containers:
+      - {name: main, image: 'spark:3.4'}
+      volumes:
+      - name: home
+        persistentVolumeClaim: {claimName: claim-alice}
+- name: a pod mounting a claim its prefix lists is created
+  allow: true
+  operation: CREATE
+  user: system:serviceaccount:demo:demo-spark
+  namespace: demo
+  group: ''
+  resource: pods
+  object:
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: exec-1
+      namespace: demo
+      labels: {spark-app-selector: app-1, spark-role: executor}
+    spec:
+      serviceAccountName: demo-spark
+      containers:
+      - {name: main, image: 'spark:3.4'}
+      volumes:
+      - name: local
+        persistentVolumeClaim: {claimName: spark-exec-1-pvc-0}
+- name: a pod without volumes or containers env is created
+  allow: true
+  operation: CREATE
+  user: system:serviceaccount:demo:demo-spark
+  namespace: demo
+  group: ''
+  resource: pods
+  object:
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: exec-1
+      namespace: demo
+      labels: {spark-app-selector: app-1, spark-role: executor}
+    spec:
+      serviceAccountName: demo-spark
+      containers:
+      - {name: main, image: 'spark:3.4'}
+- name: another user creates any pod
+  allow: true
+  operation: CREATE
+  user: system:serviceaccount:demo:hub
+  namespace: demo
+  group: ''
+  resource: pods
+  object:
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: exec-1
+      namespace: demo
+      labels: {spark-app-selector: app-1, spark-role: executor}
+    spec:
+      serviceAccountName: default
+      containers:
+      - {name: main, image: 'spark:3.4'}
+      volumes:
+      - name: s
+        secret: {secretName: hub-secret}
+- name: the cluster admin creates any pod
+  allow: true
+  operation: CREATE
+  user: kubernetes-admin
+  namespace: demo
+  group: ''
+  resource: pods
+  object:
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: exec-1
+      namespace: demo
+      labels: {spark-app-selector: app-1, spark-role: executor}
+    spec:
+      serviceAccountName: default
+      containers:
+      - {name: main, image: 'spark:3.4'}
+      volumes:
+      - name: home
+        persistentVolumeClaim: {claimName: claim-alice}
+- name: a pod it owns keeps its images when it is updated
+  allow: true
+  operation: UPDATE
+  user: system:serviceaccount:demo:demo-spark
+  namespace: demo
+  group: ''
+  resource: pods
+  object:
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: exec-1
+      namespace: demo
+      labels: {spark-app-selector: app-1, x: y}
+    spec:
+      serviceAccountName: demo-spark
+      containers:
+      - {name: main, image: 'spark:3.4'}
+  oldObject:
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: exec-1
+      namespace: demo
+      labels: {spark-app-selector: app-1, spark-role: executor}
+    spec:
+      serviceAccountName: demo-spark
+      containers:
+      - {name: main, image: 'spark:3.4'}
+- name: 'a pod it owns changes its image: refused'
+  allow: false
+  message: does not change the images
+  operation: UPDATE
+  user: system:serviceaccount:demo:demo-spark
+  namespace: demo
+  group: ''
+  resource: pods
+  object:
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: exec-1
+      namespace: demo
+      labels: {spark-app-selector: app-1, spark-role: executor}
+    spec:
+      serviceAccountName: demo-spark
+      containers:
+      - {name: main, image: 'evil:1'}
+  oldObject:
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: exec-1
+      namespace: demo
+      labels: {spark-app-selector: app-1, spark-role: executor}
+    spec:
+      serviceAccountName: demo-spark
+      containers:
+      - {name: main, image: 'spark:3.4'}
+- name: 'a pod it owns changes the image of an init container: refused'
+  allow: false
+  message: does not change the images
+  operation: UPDATE
+  user: system:serviceaccount:demo:demo-spark
+  namespace: demo
+  group: ''
+  resource: pods
+  object:
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: exec-1
+      namespace: demo
+      labels: {spark-app-selector: app-1, spark-role: executor}
+    spec:
+      serviceAccountName: demo-spark
+      containers:
+      - {name: main, image: 'spark:3.4'}
+      initContainers:
+      - {name: i, image: 'evil:1'}
+  oldObject:
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: exec-1
+      namespace: demo
+      labels: {spark-app-selector: app-1, spark-role: executor}
+    spec:
+      serviceAccountName: demo-spark
+      containers:
+      - {name: main, image: 'spark:3.4'}
+      initContainers:
+      - {name: i, image: busybox}
+- name: 'a pod it does not own is patched: refused'
+  allow: false
+  message: changes or deletes only the pods labelled spark-app-selector
+  operation: UPDATE
+  user: system:serviceaccount:demo:demo-spark
+  namespace: demo
+  group: ''
+  resource: pods
+  object:
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: exec-1
+      namespace: demo
+      labels: &id001 {app: hub}
+    spec:
+      serviceAccountName: demo-spark
+      containers:
+      - {name: main, image: 'evil:1'}
+  oldObject:
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: exec-1
+      namespace: demo
+      labels: *id001
+    spec:
+      serviceAccountName: demo-spark
+      containers:
+      - {name: main, image: 'spark:3.4'}
+- name: another instance's pod without the label cannot be relabelled
+  allow: false
+  message: changes or deletes only
+  operation: UPDATE
+  user: system:serviceaccount:demo:demo-spark
+  namespace: demo
+  group: ''
+  resource: pods
+  object:
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: exec-1
+      namespace: demo
+      labels: {spark-app-selector: app-1}
+    spec:
+      serviceAccountName: demo-spark
+      containers:
+      - {name: main, image: 'spark:3.4'}
+  oldObject:
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: exec-1
+      namespace: demo
+      labels: *id001
+    spec:
+      serviceAccountName: demo-spark
+      containers:
+      - {name: main, image: 'spark:3.4'}
+- name: a pod it owns is deleted
+  allow: true
+  operation: DELETE
+  user: system:serviceaccount:demo:demo-spark
+  namespace: demo
+  group: ''
+  resource: pods
+  oldObject:
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: exec-1
+      namespace: demo
+      labels: {spark-app-selector: app-1, spark-role: executor}
+    spec:
+      serviceAccountName: demo-spark
+      containers:
+      - {name: main, image: 'spark:3.4'}
+- name: 'a pod it does not own is deleted: refused'
+  allow: false
+  message: changes or deletes only the pods
+  operation: DELETE
+  user: system:serviceaccount:demo:demo-spark
+  namespace: demo
+  group: ''
+  resource: pods
+  oldObject:
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: exec-1
+      namespace: demo
+      labels: *id001
+    spec:
+      serviceAccountName: demo-spark
+      containers:
+      - {name: main, image: 'spark:3.4'}
+- name: a ConfigMap is created
+  allow: true
+  operation: CREATE
+  user: system:serviceaccount:demo:demo-spark
+  namespace: demo
+  group: ''
+  resource: configmaps
+  object:
+    apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: spark-exec-conf
+      namespace: demo
+      labels: &id002 {spark-app-selector: app-1}
+- name: 'a ConfigMap labelled okdp.io/pod-bounds is created: refused'
+  allow: false
+  message: may not write the ConfigMaps labelled okdp.io/pod-bounds
+  operation: CREATE
+  user: system:serviceaccount:demo:demo-spark
+  namespace: demo
+  group: ''
+  resource: configmaps
+  object:
+    apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: bounds
+      namespace: demo
+      labels: {okdp.io/pod-bounds: 'true', spark-app-selector: x}
+- name: a ConfigMap it owns is updated
+  allow: true
+  operation: UPDATE
+  user: system:serviceaccount:demo:demo-spark
+  namespace: demo
+  group: ''
+  resource: configmaps
+  object:
+    apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: spark-exec-conf
+      namespace: demo
+      labels: *id002
+  oldObject:
+    apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: spark-exec-conf
+      namespace: demo
+      labels: *id002
+- name: 'a ConfigMap it does not own is updated: refused'
+  allow: false
+  message: changes or deletes only the configmaps
+  operation: UPDATE
+  user: system:serviceaccount:demo:demo-spark
+  namespace: demo
+  group: ''
+  resource: configmaps
+  object:
+    apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: kube-root-ca.crt
+      namespace: demo
+      labels: {}
+  oldObject:
+    apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: kube-root-ca.crt
+      namespace: demo
+      labels: {}
+- name: a ConfigMap it owns is deleted
+  allow: true
+  operation: DELETE
+  user: system:serviceaccount:demo:demo-spark
+  namespace: demo
+  group: ''
+  resource: configmaps
+  oldObject:
+    apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: spark-exec-conf
+      namespace: demo
+      labels: *id002
+- name: 'another instance''s ConfigMap is deleted: refused'
+  allow: false
+  message: changes or deletes only the configmaps
+  operation: DELETE
+  user: system:serviceaccount:demo:demo-spark
+  namespace: demo
+  group: ''
+  resource: configmaps
+  oldObject:
+    apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: hub-config
+      namespace: demo
+      labels: *id001
+- name: 'the bounds ConfigMap is deleted: refused'
+  allow: false
+  message: okdp.io/pod-bounds
+  operation: DELETE
+  user: system:serviceaccount:demo:demo-spark
+  namespace: demo
+  group: ''
+  resource: configmaps
+  oldObject:
+    apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: demo-spark-pod-bounds
+      namespace: demo
+      labels: {okdp.io/pod-bounds: 'true'}
+- name: 'the bounds ConfigMap, even with the owner label, is deleted: refused'
+  allow: false
+  message: may not write the ConfigMaps labelled okdp.io/pod-bounds
+  operation: DELETE
+  user: system:serviceaccount:demo:demo-spark
+  namespace: demo
+  group: ''
+  resource: configmaps
+  oldObject:
+    apiVersion: v1
+    kind: ConfigMap
+    metadata:
+      name: demo-spark-pod-bounds
+      namespace: demo
+      labels: {okdp.io/pod-bounds: 'true', spark-app-selector: x}
+- name: a Service it owns is updated
+  allow: true
+  operation: UPDATE
+  user: system:serviceaccount:demo:demo-spark
+  namespace: demo
+  group: ''
+  resource: services
+  object:
+    apiVersion: v1
+    kind: Service
+    metadata:
+      name: spark-driver-svc
+      namespace: demo
+      labels: *id002
+  oldObject:
+    apiVersion: v1
+    kind: Service
+    metadata:
+      name: spark-driver-svc
+      namespace: demo
+      labels: *id002
+- name: 'a Service it does not own is updated: refused'
+  allow: false
+  message: changes or deletes only the services
+  operation: UPDATE
+  user: system:serviceaccount:demo:demo-spark
+  namespace: demo
+  group: ''
+  resource: services
+  object:
+    apiVersion: v1
+    kind: Service
+    metadata:
+      name: hub
+      namespace: demo
+      labels: *id001
+  oldObject:
+    apiVersion: v1
+    kind: Service
+    metadata:
+      name: hub
+      namespace: demo
+      labels: *id001
+- name: 'a Service it does not own is deleted: refused'
+  allow: false
+  message: changes or deletes only the services
+  operation: DELETE
+  user: system:serviceaccount:demo:demo-spark
+  namespace: demo
+  group: ''
+  resource: services
+  oldObject:
+    apiVersion: v1
+    kind: Service
+    metadata:
+      name: hub
+      namespace: demo
+      labels: *id001
+- name: a Service it owns is deleted
+  allow: true
+  operation: DELETE
+  user: system:serviceaccount:demo:demo-spark
+  namespace: demo
+  group: ''
+  resource: services
+  oldObject:
+    apiVersion: v1
+    kind: Service
+    metadata:
+      name: spark-driver-svc
+      namespace: demo
+      labels: *id002
+- name: a Service is created
+  allow: true
+  operation: CREATE
+  user: system:serviceaccount:demo:demo-spark
+  namespace: demo
+  group: ''
+  resource: services
+  object:
+    apiVersion: v1
+    kind: Service
+    metadata:
+      name: spark-driver-svc
+      namespace: demo
+      labels: {}
+- name: a claim it owns is deleted
+  allow: true
+  operation: DELETE
+  user: system:serviceaccount:demo:demo-spark
+  namespace: demo
+  group: ''
+  resource: persistentvolumeclaims
+  oldObject:
+    apiVersion: v1
+    kind: PersistentVolumeClaim
+    metadata:
+      name: spark-exec-1-pvc-0
+      namespace: demo
+      labels: *id002
+- name: 'another user''s claim is deleted: refused'
+  allow: false
+  message: changes or deletes only the persistentvolumeclaims
+  operation: DELETE
+  user: system:serviceaccount:demo:demo-spark
+  namespace: demo
+  group: ''
+  resource: persistentvolumeclaims
+  oldObject:
+    apiVersion: v1
+    kind: PersistentVolumeClaim
+    metadata:
+      name: claim-alice
+      namespace: demo
+      labels: {app: jupyterhub}
+- name: 'another user''s claim is updated: refused'
+  allow: false
+  message: changes or deletes only the persistentvolumeclaims
+  operation: UPDATE
+  user: system:serviceaccount:demo:demo-spark
+  namespace: demo
+  group: ''
+  resource: persistentvolumeclaims
+  object:
+    apiVersion: v1
+    kind: PersistentVolumeClaim
+    metadata:
+      name: claim-alice
+      namespace: demo
+      labels: {app: jupyterhub}
+  oldObject:
+    apiVersion: v1
+    kind: PersistentVolumeClaim
+    metadata:
+      name: claim-alice
+      namespace: demo
+      labels: {app: jupyterhub}
+- name: 'a claim is created: not covered'
+  allow: true
+  operation: CREATE
+  user: system:serviceaccount:demo:demo-spark
+  namespace: demo
+  group: ''
+  resource: persistentvolumeclaims
+  object:
+    apiVersion: v1
+    kind: PersistentVolumeClaim
+    metadata:
+      name: spark-exec-1-pvc-0
+      namespace: demo
+      labels: {}
+- name: another user deletes any claim
+  allow: true
+  operation: DELETE
+  user: kubernetes-admin
+  namespace: demo
+  group: ''
+  resource: persistentvolumeclaims
+  oldObject:
+    apiVersion: v1
+    kind: PersistentVolumeClaim
+    metadata:
+      name: claim-alice
+      namespace: demo
+      labels: {app: jupyterhub}
+- name: a namespace without a bounds ConfigMap is not bounded
+  allow: true
+  operation: CREATE
+  user: system:serviceaccount:other:demo-spark
+  namespace: other
+  group: ''
+  resource: pods
+  object:
+    apiVersion: v1
+    kind: Pod
+    metadata: {name: p, namespace: other}
+    spec:
+      serviceAccountName: default
+      containers:
+      - {name: main, image: 'spark:3.4'}
+- name: a second instance's owner label is its param's
+  allow: true
+  operation: DELETE
+  user: system:serviceaccount:team:team-spark
+  namespace: team
+  group: ''
+  resource: pods
+  oldObject:
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: exec-1
+      namespace: team
+      labels: {okdp.io/owner: x}
+    spec:
+      serviceAccountName: team-spark
+      containers:
+      - {name: main, image: 'spark:3.4'}
+- name: the default owner label is not the second instance's
+  allow: false
+  message: changes or deletes only the pods labelled okdp.io/owner
+  operation: DELETE
+  user: system:serviceaccount:team:team-spark
+  namespace: team
+  group: ''
+  resource: pods
+  oldObject:
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: exec-1
+      namespace: team
+      labels: {spark-app-selector: app-1}
+    spec:
+      serviceAccountName: team-spark
+      containers:
+      - {name: main, image: 'spark:3.4'}
+- name: a claim is refused when the param lists no prefix
+  allow: false
+  message: mount no claim but those named none
+  operation: CREATE
+  user: system:serviceaccount:team:team-spark
+  namespace: team
+  group: ''
+  resource: pods
+  object:
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: exec-1
+      namespace: team
+      labels: {okdp.io/owner: x}
+    spec:
+      serviceAccountName: team-spark
+      containers:
+      - {name: main, image: 'spark:3.4'}
+      volumes:
+      - name: v
+        persistentVolumeClaim: {claimName: spark-exec-1-pvc-0}

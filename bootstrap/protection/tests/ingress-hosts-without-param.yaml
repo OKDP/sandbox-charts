@@ -1,0 +1,69 @@
+#
+# Copyright 2026 The OKDP Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+#  Unless required by applicable law or agreed to in writing, software
+#  distributed under the License is distributed on an "AS IS" BASIS,
+#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#  See the License for the specific language governing permissions and
+#  limitations under the License.
+#
+
+# okdp-ingress-hosts without its ConfigMap okdp-ingress-hosts: the binding's
+# parameterNotFoundAction is Deny, a namespace that is not the platform's own serves nothing.
+policies: ../ingress-hosts.yaml
+policy: okdp-ingress-hosts
+namespaces: ../../namespaces.yaml
+params: []
+cases:
+- name: without its param, the policy refuses
+  allow: false
+  operation: CREATE
+  user: system:serviceaccount:argocd:argocd-application-controller
+  namespace: demo
+  group: networking.k8s.io
+  resource: ingresses
+  object:
+    apiVersion: networking.k8s.io/v1
+    kind: Ingress
+    metadata: {name: app, namespace: demo}
+    spec:
+      rules:
+      - {host: airflow.demo.okdp.sandbox}
+      tls:
+      - hosts: [airflow.demo.okdp.sandbox]
+        secretName: x
+  message: no param found
+- name: the platform's own namespace serves its host
+  allow: true
+  operation: CREATE
+  user: system:serviceaccount:argocd:argocd-application-controller
+  namespace: keycloak
+  group: networking.k8s.io
+  resource: ingresses
+  object:
+    apiVersion: networking.k8s.io/v1
+    kind: Ingress
+    metadata: {name: app, namespace: keycloak}
+    spec:
+      rules:
+      - {host: keycloak.okdp.sandbox}
+- name: an Ingress deleted
+  allow: true
+  operation: DELETE
+  user: system:serviceaccount:argocd:argocd-application-controller
+  namespace: demo
+  group: networking.k8s.io
+  resource: ingresses
+  object:
+    apiVersion: networking.k8s.io/v1
+    kind: Ingress
+    metadata: {name: app, namespace: demo}
+    spec:
+      rules:
+      - {host: keycloak.okdp.sandbox}

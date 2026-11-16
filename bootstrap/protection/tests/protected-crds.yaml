@@ -1,0 +1,82 @@
+#
+# Copyright 2026 The OKDP Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+#  Unless required by applicable law or agreed to in writing, software
+#  distributed under the License is distributed on an "AS IS" BASIS,
+#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#  See the License for the specific language governing permissions and
+#  limitations under the License.
+#
+
+# okdp-protected-crds: DELETE of any CRD of the API groups cert-manager.io,
+# external-secrets.io, postgresql.cnpg.io or their subgroups.
+policies: ../policies.yaml
+policy: okdp-protected-crds
+cases:
+  - name: a CRD of cert-manager.io is not deleted
+    allow: false
+    message: is protected by OKDP
+    operation: DELETE
+    user: kubernetes-admin
+    namespace: ""
+    group: apiextensions.k8s.io
+    resource: customresourcedefinitions
+    oldObject:
+      apiVersion: apiextensions.k8s.io/v1
+      kind: CustomResourceDefinition
+      metadata: {name: certificates.cert-manager.io}
+      spec: {group: cert-manager.io}
+  - name: a CRD of a subgroup is not deleted
+    allow: false
+    operation: DELETE
+    user: kubernetes-admin
+    namespace: ""
+    group: apiextensions.k8s.io
+    resource: customresourcedefinitions
+    oldObject:
+      apiVersion: apiextensions.k8s.io/v1
+      kind: CustomResourceDefinition
+      metadata: {name: challenges.acme.cert-manager.io}
+      spec: {group: acme.cert-manager.io}
+  - name: a CRD of postgresql.cnpg.io is not deleted
+    allow: false
+    operation: DELETE
+    user: kubernetes-admin
+    namespace: ""
+    group: apiextensions.k8s.io
+    resource: customresourcedefinitions
+    oldObject:
+      apiVersion: apiextensions.k8s.io/v1
+      kind: CustomResourceDefinition
+      metadata: {name: clusters.postgresql.cnpg.io}
+      spec: {group: postgresql.cnpg.io}
+  - name: a CRD of another group is deleted
+    allow: true
+    operation: DELETE
+    user: kubernetes-admin
+    namespace: ""
+    group: apiextensions.k8s.io
+    resource: customresourcedefinitions
+    oldObject:
+      apiVersion: apiextensions.k8s.io/v1
+      kind: CustomResourceDefinition
+      metadata: {name: widgets.example.com}
+      spec: {group: example.com}
+  - name: a group that only ends like a protected one is deleted
+    allow: true
+    operation: DELETE
+    user: kubernetes-admin
+    namespace: ""
+    group: apiextensions.k8s.io
+    resource: customresourcedefinitions
+    oldObject:
+      apiVersion: apiextensions.k8s.io/v1
+      kind: CustomResourceDefinition
+      metadata: {name: widgets.evilcert-manager.io}
+      spec: {group: evilcert-manager.io}

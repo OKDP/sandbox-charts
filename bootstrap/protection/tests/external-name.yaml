@@ -1,0 +1,165 @@
+#
+# Copyright 2026 The OKDP Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+#  Unless required by applicable law or agreed to in writing, software
+#  distributed under the License is distributed on an "AS IS" BASIS,
+#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#  See the License for the specific language governing permissions and
+#  limitations under the License.
+#
+
+# okdp-external-name: a Service of type ExternalName in a namespace that is not the
+# platform's own. Run by scripts/check-bootstrap.sh (scripts/policytest).
+policies: ../ingress-hosts.yaml
+policy: okdp-external-name
+namespaces: ../../namespaces.yaml
+params: []
+cases:
+- name: a Service of a project, ClusterIP
+  allow: true
+  operation: CREATE
+  user: system:serviceaccount:argocd:argocd-application-controller
+  namespace: demo
+  group: ""
+  resource: services
+  object:
+    apiVersion: v1
+    kind: Service
+    metadata: {name: s, namespace: demo}
+    spec:
+      ports:
+      - {port: 80}
+- name: a Service of a project with no type written
+  allow: true
+  operation: UPDATE
+  user: system:serviceaccount:argocd:argocd-application-controller
+  namespace: demo
+  group: ""
+  resource: services
+  object:
+    apiVersion: v1
+    kind: Service
+    metadata: {name: s, namespace: demo}
+    spec:
+      type: ClusterIP
+- name: a Service of type ExternalName in a project
+  allow: false
+  message: is not of type ExternalName
+  operation: CREATE
+  user: system:serviceaccount:argocd:argocd-application-controller
+  namespace: demo
+  group: ""
+  resource: services
+  object:
+    apiVersion: v1
+    kind: Service
+    metadata: {name: s, namespace: demo}
+    spec:
+      type: ExternalName
+      externalName: keycloak-http.keycloak.svc.cluster.local
+- name: a Service of type ExternalName updated in a project
+  allow: false
+  operation: UPDATE
+  user: system:serviceaccount:argocd:argocd-application-controller
+  namespace: demo
+  group: ""
+  resource: services
+  object:
+    apiVersion: v1
+    kind: Service
+    metadata: {name: s, namespace: demo}
+    spec:
+      type: ExternalName
+      externalName: other.team.svc.cluster.local
+- name: a platform namespace keeps its ExternalName
+  allow: true
+  operation: CREATE
+  user: system:serviceaccount:argocd:argocd-application-controller
+  namespace: okdp-system
+  group: ""
+  resource: services
+  object:
+    apiVersion: v1
+    kind: Service
+    metadata: {name: s, namespace: okdp-system}
+    spec:
+      type: ExternalName
+      externalName: keycloak-http.keycloak.svc.cluster.local
+- name: a namespace without the label is bound
+  allow: false
+  operation: CREATE
+  user: system:serviceaccount:argocd:argocd-application-controller
+  namespace: team
+  group: ""
+  resource: services
+  object:
+    apiVersion: v1
+    kind: Service
+    metadata: {name: s, namespace: team}
+    spec:
+      type: ExternalName
+      externalName: keycloak-http.keycloak.svc.cluster.local
+- name: a namespace with another value of the label is bound
+  allow: false
+  operation: CREATE
+  user: system:serviceaccount:argocd:argocd-application-controller
+  namespace: team
+  namespaceLabels: {okdp.io/platform: "false"}
+  group: ""
+  resource: services
+  object:
+    apiVersion: v1
+    kind: Service
+    metadata: {name: s, namespace: team}
+    spec:
+      type: ExternalName
+      externalName: keycloak-http.keycloak.svc.cluster.local
+- name: cnpg-system, in namespaces.yaml without the label, is bound
+  allow: false
+  operation: CREATE
+  user: system:serviceaccount:argocd:argocd-application-controller
+  namespace: cnpg-system
+  group: ""
+  resource: services
+  object:
+    apiVersion: v1
+    kind: Service
+    metadata: {name: s, namespace: cnpg-system}
+    spec:
+      type: ExternalName
+      externalName: keycloak-http.keycloak.svc.cluster.local
+- name: the cluster's own namespace is left out
+  allow: true
+  operation: CREATE
+  user: system:serviceaccount:argocd:argocd-application-controller
+  namespace: kube-system
+  group: ""
+  resource: services
+  object:
+    apiVersion: v1
+    kind: Service
+    metadata: {name: s, namespace: kube-system}
+    spec:
+      type: ExternalName
+      externalName: keycloak-http.keycloak.svc.cluster.local
+- name: a namespace labelled as the platform's is left out
+  allow: true
+  operation: CREATE
+  user: system:serviceaccount:argocd:argocd-application-controller
+  namespace: team
+  namespaceLabels: {okdp.io/platform: "true"}
+  group: ""
+  resource: services
+  object:
+    apiVersion: v1
+    kind: Service
+    metadata: {name: s, namespace: team}
+    spec:
+      type: ExternalName
+      externalName: keycloak-http.keycloak.svc.cluster.local

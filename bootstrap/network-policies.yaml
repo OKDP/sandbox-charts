@@ -1,0 +1,151 @@
+#
+# Copyright 2026 The OKDP Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+#  Unless required by applicable law or agreed to in writing, software
+#  distributed under the License is distributed on an "AS IS" BASIS,
+#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#  See the License for the specific language governing permissions and
+#  limitations under the License.
+#
+
+# The ingress of the namespaces of the bootstrap that no release brings a NetworkPolicy
+# for (bootstrap/README.md, Network policies), applied after the namespaces: a default
+# deny of the ingress in each, and the ports other peers legitimately reach, from any
+# source. Not from the API server only: it runs on the host network of the control-plane
+# nodes, whose addresses a NetworkPolicy cannot name for every cluster (kind's, a node
+# address or the pod network's gateway, differ); so each webhook's port is open to all,
+# and the rest of the pods' ports (metrics, health, the controllers' own) to none. The
+# kubelet's probes come from the node, which a NetworkPolicy always lets in.
+#   cert-manager      the webhooks of cert-manager (10250) and trust-manager (6443)
+#   kube-tools        none (Reloader listens for nobody)
+#   ingress-nginx     the controller's 80 and 443 (the browsers, and the pods that reach
+#                     keycloak.<domain> through it); its admission webhook is off
+#                     (bootstrap/ingress-nginx/values.yaml), no 8443
+#   dns-server        53 (the host and the kind network query the sandbox's zone; the
+#                     server's acl, bootstrap/dns-server/values.yaml, bounds who is
+#                     answered)
+#   cnpg-system       the operator's webhooks (9443)
+#   external-secrets  the webhook (10250)
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: cert-manager
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ingress-ports
+  namespace: cert-manager
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - ports:
+        - {protocol: TCP, port: 10250}
+        - {protocol: TCP, port: 6443}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: kube-tools
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: ingress-nginx
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ingress-ports
+  namespace: ingress-nginx
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - ports:
+        - {protocol: TCP, port: 80}
+        - {protocol: TCP, port: 443}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: dns-server
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ingress-ports
+  namespace: dns-server
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: cnpg-system
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ingress-ports
+  namespace: cnpg-system
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - ports:
+        - {protocol: TCP, port: 9443}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: external-secrets
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ingress-ports
+  namespace: external-secrets
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - ports:
+        - {protocol: TCP, port: 10250}

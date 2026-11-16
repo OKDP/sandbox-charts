@@ -1,0 +1,220 @@
+#
+# Copyright 2026 The OKDP Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+#  Unless required by applicable law or agreed to in writing, software
+#  distributed under the License is distributed on an "AS IS" BASIS,
+#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#  See the License for the specific language governing permissions and
+#  limitations under the License.
+#
+
+# okdp-platform-label: the label okdp.io/platform of a Namespace is set, changed or removed
+# by a cluster administrator only. Run by scripts/check-bootstrap.sh (scripts/policytest).
+policies: ../policies.yaml
+policy: okdp-platform-label
+cases:
+- name: a tenant does not create a Namespace with the label
+  allow: false
+  message: only a cluster administrator
+  operation: CREATE
+  user: system:serviceaccount:demo:project
+  groups: [system:serviceaccounts, system:serviceaccounts:demo, system:authenticated]
+  namespace: ""
+  group: ""
+  resource: namespaces
+  object:
+    apiVersion: v1
+    kind: Namespace
+    metadata: {name: demo, labels: {okdp.io/platform: "true"}}
+- name: a tenant does not add the label to its Namespace
+  allow: false
+  message: only a cluster administrator
+  operation: UPDATE
+  user: system:serviceaccount:demo:project
+  groups: [system:serviceaccounts, system:serviceaccounts:demo, system:authenticated]
+  namespace: ""
+  group: ""
+  resource: namespaces
+  object:
+    apiVersion: v1
+    kind: Namespace
+    metadata: {name: demo, labels: {okdp.io/platform: "true", okdp.io/project: demo}}
+  oldObject:
+    apiVersion: v1
+    kind: Namespace
+    metadata: {name: demo, labels: {okdp.io/project: demo}}
+- name: an engine does not take the label off
+  allow: false
+  message: only a cluster administrator
+  operation: UPDATE
+  user: system:serviceaccount:argocd:argocd-application-controller
+  groups: [system:serviceaccounts, system:serviceaccounts:argocd, system:authenticated]
+  namespace: ""
+  group: ""
+  resource: namespaces
+  object:
+    apiVersion: v1
+    kind: Namespace
+    metadata: {name: okdp-system, labels: {okdp.io/project: okdp-system}}
+  oldObject:
+    apiVersion: v1
+    kind: Namespace
+    metadata: {name: okdp-system, labels: {okdp.io/platform: "true", okdp.io/project: okdp-system}}
+- name: an engine does not change the value
+  allow: false
+  message: only a cluster administrator
+  operation: UPDATE
+  user: system:serviceaccount:flux-system:kustomize-controller
+  groups: [system:serviceaccounts, system:serviceaccounts:flux-system, system:authenticated]
+  namespace: ""
+  group: ""
+  resource: namespaces
+  object:
+    apiVersion: v1
+    kind: Namespace
+    metadata: {name: okdp-system, labels: {okdp.io/platform: system}}
+  oldObject:
+    apiVersion: v1
+    kind: Namespace
+    metadata: {name: okdp-system, labels: {okdp.io/platform: "true"}}
+- name: the label through the status subresource
+  allow: false
+  message: only a cluster administrator
+  operation: UPDATE
+  user: system:serviceaccount:demo:project
+  groups: [system:authenticated]
+  namespace: ""
+  group: ""
+  resource: namespaces/status
+  object:
+    apiVersion: v1
+    kind: Namespace
+    metadata: {name: demo, labels: {okdp.io/platform: "true"}}
+  oldObject:
+    apiVersion: v1
+    kind: Namespace
+    metadata: {name: demo}
+- name: the label through the finalize subresource
+  allow: false
+  message: only a cluster administrator
+  operation: UPDATE
+  user: system:serviceaccount:demo:project
+  groups: [system:authenticated]
+  namespace: ""
+  group: ""
+  resource: namespaces/finalize
+  object:
+    apiVersion: v1
+    kind: Namespace
+    metadata: {name: demo, labels: {okdp.io/platform: "true"}}
+  oldObject:
+    apiVersion: v1
+    kind: Namespace
+    metadata: {name: demo}
+- name: a user with no group at all does not set it
+  allow: false
+  message: only a cluster administrator
+  operation: UPDATE
+  user: someone
+  namespace: ""
+  group: ""
+  resource: namespaces
+  object:
+    apiVersion: v1
+    kind: Namespace
+    metadata: {name: demo, labels: {okdp.io/platform: "true"}}
+  oldObject:
+    apiVersion: v1
+    kind: Namespace
+    metadata: {name: demo}
+- name: an engine leaves the label as it is
+  allow: true
+  operation: UPDATE
+  user: system:serviceaccount:argocd:argocd-application-controller
+  groups: [system:serviceaccounts, system:authenticated]
+  namespace: ""
+  group: ""
+  resource: namespaces
+  object:
+    apiVersion: v1
+    kind: Namespace
+    metadata:
+      name: okdp-system
+      labels: {okdp.io/platform: "true", pod-security.kubernetes.io/enforce: privileged}
+  oldObject:
+    apiVersion: v1
+    kind: Namespace
+    metadata: {name: okdp-system, labels: {okdp.io/platform: "true"}}
+- name: a tenant's Namespace without the label is created
+  allow: true
+  operation: CREATE
+  user: system:serviceaccount:argocd:argocd-application-controller
+  groups: [system:serviceaccounts, system:authenticated]
+  namespace: ""
+  group: ""
+  resource: namespaces
+  object:
+    apiVersion: v1
+    kind: Namespace
+    metadata: {name: demo, labels: {okdp.io/project: demo}}
+- name: no label on either side is unchanged
+  allow: true
+  operation: UPDATE
+  user: system:serviceaccount:argocd:argocd-application-controller
+  groups: [system:authenticated]
+  namespace: ""
+  group: ""
+  resource: namespaces
+  object:
+    apiVersion: v1
+    kind: Namespace
+    metadata: {name: demo}
+  oldObject:
+    apiVersion: v1
+    kind: Namespace
+    metadata: {name: demo}
+- name: an administrator of kubeadm's admin.conf sets it
+  allow: true
+  operation: UPDATE
+  user: kubernetes-admin
+  groups: [kubeadm:cluster-admins, system:authenticated]
+  namespace: ""
+  group: ""
+  resource: namespaces
+  object:
+    apiVersion: v1
+    kind: Namespace
+    metadata: {name: strimzi, labels: {okdp.io/platform: "true"}}
+  oldObject:
+    apiVersion: v1
+    kind: Namespace
+    metadata: {name: strimzi}
+- name: system:masters sets it at creation
+  allow: true
+  operation: CREATE
+  user: kubernetes-super-admin
+  groups: [system:masters, system:authenticated]
+  namespace: ""
+  group: ""
+  resource: namespaces
+  object:
+    apiVersion: v1
+    kind: Namespace
+    metadata: {name: okdp-system, labels: {okdp.io/platform: "true"}}
+- name: a Namespace deleted is not this policy's
+  allow: true
+  operation: DELETE
+  user: system:serviceaccount:demo:project
+  namespace: ""
+  group: ""
+  resource: namespaces
+  oldObject:
+    apiVersion: v1
+    kind: Namespace
+    metadata: {name: demo, labels: {okdp.io/platform: "true"}}
