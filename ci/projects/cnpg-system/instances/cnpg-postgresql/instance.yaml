@@ -1,0 +1,6 @@
+# The platform's database server, the provider of the default class of
+# database-server connections of the test cases (ci/platform.yaml): the
+# package of this catalog, as the sandbox's instance cnpg-system/cnpg-postgresql,
+# the release cnpg-system-cnpg-postgresql.
+service: cnpg-postgresql
+version: 18.3.0-1.0.0

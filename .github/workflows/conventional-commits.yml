@@ -25,6 +25,6 @@ permissions:
 
 jobs:
   commits:
-    # SECURITY (CI-01): @main is a mutable ref; pin to a commit SHA of
-    # OKDP/gh-workflows once that repository's release flow is settled.
-    uses: OKDP/gh-workflows/.github/workflows/conventional-commits.yml@main
+    # SECURITY (CI-01): pinned to a commit SHA of OKDP/gh-workflows (its main
+    # on 2026-11-04: no release carries this workflow yet). Bump it by hand.
+    uses: OKDP/gh-workflows/.github/workflows/conventional-commits.yml@52169486701c7ec78ef3e1edbf914580570a962b

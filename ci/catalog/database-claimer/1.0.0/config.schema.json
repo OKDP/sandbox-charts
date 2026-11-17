@@ -1,0 +1,30 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "db": {
+      "description": "A database: a claim template of the default class by default.",
+      "type": [
+        "string",
+        "object"
+      ],
+      "default": {},
+      "x-okdp-connection-ref": {
+        "contract": "database-server",
+        "provision": true
+      }
+    },
+    "a-db": {
+      "description": "Another database: a claim template of the default class by default.",
+      "type": [
+        "string",
+        "object"
+      ],
+      "default": {},
+      "x-okdp-connection-ref": {
+        "contract": "database-server",
+        "provision": true
+      }
+    }
+  }
+}

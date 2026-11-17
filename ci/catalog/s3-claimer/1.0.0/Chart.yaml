@@ -1,0 +1,12 @@
+# A test package of the cases (ci/catalog/ of the
+# repository), never deployed: a claimer of an s3 connection, one claim
+# template, the field bucket, so that the instances d of the project a-b and
+# b-d of the project a claim a-b.d.bucket and a.b-d.bucket, which a lossy
+# mapping of an ID makes one (the two-namespace case of the providers of s3
+# connections; database-claimer's is the same for database-server).
+apiVersion: v2
+name: s3-claimer
+description: A test claimer of an s3 connection, bucket.
+type: application
+version: 1.0.0
+# No dependency: nothing rendered but what its claims publish.

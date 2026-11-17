@@ -1,0 +1,23 @@
+# The platform values every test case of the catalog starts from, under its
+# package's ci/platform.yaml and its own ci/<case>-platform.yaml: the
+# classes of the claims and the secret store their credentials cross
+# namespaces through, as the sandbox's.
+#
+# A claim of a database that names neither a class nor a provider, the
+# default of the references that take one ({}), binds to the provider of
+# the default class, standard: the platform's database server,
+# ci/projects/cnpg-system/instances/cnpg-postgresql, the release
+# cnpg-system-cnpg-postgresql in the namespace cnpg-system, its claimers in
+# demo. The cases that test a provider of claims add the claimers of two
+# more projects, a-b and a, whose claims' IDs collide under a lossy mapping
+# (ci/<case>-projects/), and classes of their own (cnpg-postgresql,
+# seaweedfs, s3-minio-provisioner: their instance under test).
+global:
+  okdp:
+    provisioning:
+      database-server:
+        default: standard
+        classes:
+          standard: {provider: cnpg-system/cnpg-postgresql}
+    secrets:
+      store: okdp-secrets

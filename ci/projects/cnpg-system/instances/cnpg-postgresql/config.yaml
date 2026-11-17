@@ -1,0 +1,2 @@
+# No database of its own: the databases of the claims bound to it.
+databases: []

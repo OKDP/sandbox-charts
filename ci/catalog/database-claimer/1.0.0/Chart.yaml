@@ -1,0 +1,12 @@
+# A test package of the cases (ci/catalog/ of the
+# repository), never deployed: a claimer of database-server connections,
+# two claim templates, the fields db and a-db, so that the claims of its
+# instances x and x-a are demo.x.a-db and demo.x-a.db, which the former
+# SQL encoding of cnpg-postgresql made one (its case collision), and, in the
+# projects a-b (instance c) and a (instance b-c), a-b.c.db and a.b-c.db.
+apiVersion: v2
+name: database-claimer
+description: A test claimer of two database-server connections, db and a-db.
+type: application
+version: 1.0.0
+# No dependency: nothing rendered but what its claims publish.
